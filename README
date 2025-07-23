@@ -1,0 +1,29 @@
+Cesium - TransiT - University of Glasgow
+Author: Dr. Daniel Mitchell
+
+Additional Authors: Include name here. 
+===================
+
+
+# Installation
+1. Unzip the template into the desired directory.
+2. Make sure that Node.js is installed on the computer. Follow instructions at https://nodejs.org/en/download
+	* To check if Node is installed, open a command prompt and enter `node -v` and verify that a version such as `v22.15.0` is displayed.
+3. Install the following dependencies:
+	* express (I haven't done this yet)
+	* axios
+	* dotenv (I haven't done this yet)
+    Line of code you need `npm install express axios dotenv`
+
+    
+4. Run the command `npm install` from your terminal, to install of the required dependencies
+5. Additional modules can be installed if needed by opening a console to the root app folder and entering `npm install packagename` or similar command as recommended by the module documentation.
+
+# Environment Variables
+1. Create a new `.env` file within the root of the project, based on the provided `.env.template`
+2. Update with the the appropriate Cesium ION and Google API Keys
+
+# Launching the App
+1. Launch a terminal at the root of this project
+2. Run the command `npm run dev` from your terminal or powershell
+3. Open `http://localhost:3000` within a browser
