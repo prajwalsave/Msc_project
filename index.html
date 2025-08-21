@@ -5,54 +5,158 @@
     <title>Cesium Glasgow</title>
     <link rel="stylesheet" href="node_modules/cesium/Build/Cesium/Widgets/widgets.css" />
     <style>
-      html, body, #cesiumContainer {
-        width: 100%;
-        height: 100%;
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-      }
+      html, body, #cesiumContainer { width:100%; height:100%; margin:0; padding:0; overflow:hidden; }
+
       .cesium-button {
-        padding: 6px 12px;
-        margin-right: 6px;
-        background: #1a73e8;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        font-weight: bold;
-        cursor: pointer;
+        padding: 6px 12px; margin-right: 6px; background: #1a73e8; color: white; border: none;
+        border-radius: 6px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,.15);
       }
+      .cesium-button:active { transform: translateY(1px); }
+
+      .toolbar {
+        position: absolute; top: 10px; left: 10px; z-index: 1000;
+        display:flex; flex-wrap:wrap; gap:8px;
+        background: rgba(255,255,255,0.9); padding:8px; border-radius:10px;
+        box-shadow: 0 10px 26px rgba(0,0,0,0.2);
+      }
+
+      .slider-tray {
+        position: absolute; bottom: 10px; width: 100%; display: flex; justify-content: center;
+        gap: 10px; z-index: 1000; flex-direction: column; align-items: center; pointer-events:none;
+      }
+      .slider-group {
+        pointer-events:auto;
+        display: none; padding: 8px 10px; border-radius: 10px;
+        background: rgba(255,255,255,0.92); box-shadow: 0 6px 16px rgba(0,0,0,0.15);
+        align-items: center; gap: 10px;
+      }
+      .slider-group.show { display: flex; }
+      .slider-group input[type="range"] { width: 360px; }
+
+      .legend {
+        position: absolute; top: 10px; right: 10px; z-index: 1000;
+        background: rgba(0,0,0,0.65); color: #fff; padding: 10px 12px; border-radius: 10px;
+        font: 12px/1.35 system-ui, sans-serif; box-shadow: 0 10px 26px rgba(0,0,0,0.25);
+      }
+      .legend .row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+      .swatch { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+      .swatch.aq-no2 { background:#ffd54f; }
+      .swatch.aq-pm25 { background:#ef5350; }
+      .swatch.aq-pm10 { background:#42a5f5; }
+      .swatch.aq-o3 { background:#66bb6a; }
+      .swatch.traffic { background:#ff9800; opacity:.7; border:1px solid rgba(255,255,255,0.35); }
+
       .aq-overlay {
-        position: absolute;
-        bottom: 70px;
-        background: rgba(0, 0, 0, 0.8);
-        color: white;
-        padding: 10px;
-        font-family: sans-serif;
-        border-radius: 6px;
-        z-index: 1000;
-        width: 280px;
-        display: none;
+        position: absolute; bottom: 86px; background: rgba(0,0,0,0.72); color: white;
+        padding: 10px; font-family: system-ui, sans-serif; border-radius: 10px; z-index: 1000;
+        width: 300px; display: none; box-shadow: 0 6px 16px rgba(0,0,0,0.25);
+        backdrop-filter: blur(2px);
       }
+
+      /* === Assumptions panel === */
+      .panel {
+        position: absolute; top: 60px; left: 10px; z-index: 1000; width: 360px;
+        background: rgba(255,255,255,0.98); border-radius: 12px; padding: 12px 12px 14px;
+        box-shadow: 0 10px 26px rgba(0,0,0,0.25); display: none;
+        font: 12px/1.35 system-ui, sans-serif;
+      }
+      .panel.show { display:block; }
+      .panel h3 { margin: 0 0 6px 0; font-size: 15px; }
+      .panel .sub { color:#555; margin-bottom: 8px; }
+      .panel .row { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:6px 0; }
+      .panel .row label { flex:1; }
+      .panel .row input { width:120px; padding:6px; border-radius:8px; border:1px solid #e5e7eb; }
+      .panel .hint { color:#555; margin-top:8px; }
+      .panel .mini { color:#777; font-size:11px; }
+      .panel .btns { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+      .pill { display:inline-block; padding:2px 6px; border-radius:999px; background:#eef2ff; color:#1f3a93; font-weight:600; }
     </style>
   </head>
 
   <body>
     <div id="cesiumContainer"></div>
 
-    <!-- AQI Slider -->
-    <div style="position: absolute; bottom: 10px; width: 100%; text-align: center; z-index: 1000;">
-      <input type="range" id="aqi-slider" min="0" value="0" style="width: 300px;" />
-      <span id="aqi-time-label">AQI Time: T0</span>
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <button id="btnAqi" class="cesium-button" title="1">🌫️ Air Quality</button>
+      <button id="btnTraffic" class="cesium-button" title="2">🚦 Traffic</button>
+      <button id="btnCompare" class="cesium-button" title="3">🔀 Compare</button>
+      <button id="btnToggleSensors" class="cesium-button" title="s">📍 Toggle Sensors</button>
+      <button id="btnAssumptions" class="cesium-button" title="a = open/close">⚙️ Assumptions</button>
     </div>
 
-    <!-- Traffic Slider -->
-    <div style="position: absolute; bottom: 50px; width: 100%; text-align: center; z-index: 1000;">
-      <input type="range" id="traffic-slider" min="0" value="0" style="width: 300px;" />
-      <span id="traffic-time-label">Traffic Time: T0</span>
+    <!-- Legend -->
+    <div class="legend" id="legend">
+      <div class="row"><span class="swatch aq-no2"></span> NO₂ (µg/m³)</div>
+      <div class="row"><span class="swatch aq-pm25"></span> PM2.5 (µg/m³)</div>
+      <div class="row"><span class="swatch aq-pm10"></span> PM10 (µg/m³)</div>
+      <div class="row"><span class="swatch aq-o3"></span> O₃ (µg/m³)</div>
+      <div class="row"><span class="swatch traffic"></span> Traffic (vehicles/hour • shifted footprint)</div>
     </div>
 
-    <!-- Module JS -->
+    <!-- Sliders -->
+    <div class="slider-tray">
+      <div class="slider-group" id="groupAqi">
+        <strong>AQ time:</strong>
+        <input type="range" id="aqi-slider" min="0" value="0" />
+        <span id="aqi-time-label">—</span>
+      </div>
+
+      <div class="slider-group" id="groupTraffic">
+        <strong>Traffic time:</strong>
+        <input type="range" id="traffic-slider" min="0" value="0" />
+        <span id="traffic-time-label">—</span>
+      </div>
+
+      <div class="slider-group" id="groupCompare">
+        <strong>Compare time:</strong>
+        <input type="range" id="compare-slider" min="0" value="0" />
+        <span id="compare-time-label">—</span>
+      </div>
+    </div>
+
+    <!-- Assumptions panel -->
+    <div class="panel" id="assumptions-panel">
+      <h3>Traffic → CO₂ assumptions</h3>
+      <div class="sub">
+        We estimate hourly CO₂ like:<br/>
+        <span class="pill">vehicles/h × effective EF (kg/km/veh) × distance in zone (km/veh)</span>
+      </div>
+
+      <div class="mini">*If shares don’t sum to 1, we auto-normalise.</div>
+      <strong>Fleet shares</strong>
+      <div class="row"><label for="share-car">Car</label><input id="share-car" type="number" step="0.01" min="0" max="1" value="0.78"></div>
+      <div class="row"><label for="share-lgv">LGV (vans)</label><input id="share-lgv" type="number" step="0.01" min="0" max="1" value="0.14"></div>
+      <div class="row"><label for="share-hgv">HGV</label><input id="share-hgv" type="number" step="0.01" min="0" max="1" value="0.05"></div>
+      <div class="row"><label for="share-bus">Bus/Coach</label><input id="share-bus" type="number" step="0.01" min="0" max="1" value="0.03"></div>
+
+      <strong style="margin-top:6px; display:block;">Emission factors (kg CO₂ / km)</strong>
+      <div class="row"><label for="ef-car">Car</label><input id="ef-car" type="number" step="0.01" min="0" value="0.18"></div>
+      <div class="row"><label for="ef-lgv">LGV</label><input id="ef-lgv" type="number" step="0.01" min="0" value="0.25"></div>
+      <div class="row"><label for="ef-hgv">HGV</label><input id="ef-hgv" type="number" step="0.01" min="0" value="0.85"></div>
+      <div class="row"><label for="ef-bus">Bus</label><input id="ef-bus" type="number" step="0.01" min="0" value="0.82"></div>
+
+      <div class="mini">Effective EF (weighted by shares): <b id="label-eff-ef">0.00</b> kg/km/veh</div>
+
+      <strong style="margin-top:6px; display:block;">Avg distance per vehicle inside zone (km)</strong>
+      <div class="row"><label for="dz-G1">G1</label><input id="dz-G1" type="number" step="0.1" min="0" value="0.5"></div>
+      <div class="row"><label for="dz-G2">G2</label><input id="dz-G2" type="number" step="0.1" min="0" value="0.5"></div>
+      <div class="row"><label for="dz-G3">G3</label><input id="dz-G3" type="number" step="0.1" min="0" value="0.5"></div>
+      <div class="row"><label for="dz-G12">G12</label><input id="dz-G12" type="number" step="0.1" min="0" value="0.5"></div>
+
+      <div class="hint mini">Tip: larger zones or gyratories may warrant higher distances (e.g., 0.6–0.9 km).</div>
+
+      <div class="btns">
+        <button id="assumptions-apply" class="cesium-button">Apply & Recompute</button>
+        <button id="assumptions-reset" class="cesium-button" style="background:#5f6368">Reset defaults</button>
+        <button id="assumptions-close" class="cesium-button" style="background:#5f6368">Close</button>
+      </div>
+
+      <div class="mini" style="margin-top:6px;">
+        These are first-order estimates (counts, not speed/occupancy). Use official factors & local fleet mix for reporting.
+      </div>
+    </div>
+
     <script type="module" src="/main.js"></script>
   </body>
 </html>

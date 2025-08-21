@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Dev Zone Drawer</title>
+    <style>
+      html, body, #cesiumContainer {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        width: 100%;
+        overflow: hidden;
+      }
+      #btns {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        z-index: 10;
+        background: rgba(255, 255, 255, 0.85);
+        padding: 10px;
+        border-radius: 6px;
+        font-family: sans-serif;
+      }
+      #counter {
+        margin-top: 8px;
+        font-size: 14px;
+        font-weight: bold;
+        color: #333;
+      }
+      button {
+        margin: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="cesiumContainer"></div>
+    <div id="btns">
+      <button id="undoBtn">↩️ Undo Point</button>
+      <button id="placePinBtn">📍 Add Pin</button>
+      <button id="finishBtn">✅ Complete Zone</button>
+      <button id="exportBtn">💾 Export All Zones</button>
+      <button id="clearBtn">🧹 Clear All</button>
+      <div id="counter">🛑 No points marked. Click on map to begin.</div>
+      <input type="file" id="importBtn" accept=".geojson" style="margin: 10px;" />
+    </div>
+
+
+    <script type="module" src="/src/dev/draw.js"></script>
+  </body>
+</html>

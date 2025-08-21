@@ -1,0 +1,5 @@
+zone,metric,best_r,best_lag_h,direction,n,ci_low,ci_high
+G1,NO2,0.19,-14,AQ leads,939,0.128,0.251
+G1,PM25,-0.049,-9,AQ leads,908,-0.114,0.016
+G1,PM10,0.048,20,AQ lags,897,-0.017,0.114
+G1,O3,-0.398,-18,AQ leads,931,-0.45,-0.342
