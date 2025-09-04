@@ -8,8 +8,8 @@ Cesium.RequestScheduler.requestsByServer["tile.googleapis.com:443"] = 18
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY
 
 // GLASGOW coordinates - centered on River Liffey and south city center
-const GLASGOW_LAT = 55.86087   // Moved further south to include more of south city center
-const GLASGOW_LON = -4.24302  // Keeping the same longitude for river alignment
+const GLASGOW_LAT = 55.868349   // Moved further south to include more of south city center
+const GLASGOW_LON = -4.288444  // Keeping the same longitude for river alignment
 const INITIAL_GLASGOW_HEIGHT = 500 // Height in meters
 
 //Function to setup a pause or wait function
