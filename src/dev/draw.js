@@ -1,3 +1,10 @@
+/**
+ * draw.js
+ * 
+ * A development utility for CesiumJS to help with manual coordinate extraction 
+ * and polygon drawing. This file is not used in the production application.
+ */
+
 // window.CESIUM_BASE_URL = '/cesium';
 
 // import {

@@ -9,7 +9,7 @@
     "type-check": "tsc --noEmit",
     "server": "tsx server/index.ts",
     "dev:all": "concurrently -n \"VITE,SERVER\" -c \"magenta,blue\" \"npm run dev\" \"npm run server\"",
-    "build:server": "tsc server/index.ts --outDir dist-server"
+    "clean": "rimraf dist dist-server"
   },
   "dependencies": {
     "axios": "^1.10.0",
@@ -23,6 +23,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.6.0",
     "concurrently": "^9.2.1",
+    "rimraf": "^6.1.3",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
     "vite": "^7.0.4",

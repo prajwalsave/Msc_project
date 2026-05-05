@@ -13,7 +13,6 @@ declare module "*.md";
 interface ImportMetaEnv {
   readonly VITE_CESIUM_ION_TOKEN: string;
   readonly VITE_GOOGLE_MAPS_API_KEY: string;
-  readonly VITE_CESIUM_ION_ACCESS_TOKEN: string;
   // add more environment variables as needed
 }
 

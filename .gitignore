@@ -7,3 +7,6 @@ analysis/outputs/
 public/data/openaq_*.csv
 
 *.pptx
+*.bak
+analysis/data/
+dist-server/
