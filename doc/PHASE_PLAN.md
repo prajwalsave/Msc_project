@@ -1,568 +1,374 @@
 # PHASE_PLAN.md
 
 Glasgow Carbon Map — Execution Roadmap
-Generated after full audit of local project structure (May 2026).
+Updated after Phase 3 completion and data strategy review (May 2026).
 
-This document is the authoritative phase plan. It supersedes the earlier draft
-generated before the actual directory structure was confirmed. Do not proceed to
-any phase without completing the phase before it.
-
----
-
-## Phase 1b — Config and data fix (pre-TypeScript baseline)
-
-### Objective
-Eliminate the one remaining build blocker and document the data files correctly
-so that Phase 2 starts from a state where `npm run build` succeeds and the app
-runs locally without errors.
-
-### Input state
-- `npm run dev` works because Vite's dev server does not execute the `build.rollupOptions.input` block.
-- `npm run build` fails silently: Rollup cannot find `src/dev/draw.html` (file is at `public/dev/draw.html`).
-- Three pre-computed emissions JSON files sit in `public/data/` with no frontend consumer.
-- No `build` or `type-check` scripts exist in `package.json`.
-- `typescript` and `@types/node` are absent from `devDependencies`.
-
-### Output state
-- `npm run build` completes without errors.
-- `npm run type-check` runs `tsc --noEmit` against the `app/` directory.
-- All data files in `public/data/` are accounted for in `DATA_CONTRACTS.md`.
-- Dead data files are either removed from `public/data/` or explicitly documented as unused.
-
-### Concrete task list
-
-1. **Fix the draw build input in `vite.config.js`.**
-   Change:
-   ```
-   draw: path.resolve(__dirname, "src/dev/draw.html")
-   ```
-   To:
-   ```
-   draw: path.resolve(__dirname, "public/dev/draw.html")
-   ```
-   This is the only change required to unblock `npm run build`.
-
-2. **Add missing scripts to `package.json`.**
-   Add under `"scripts"`:
-   ```json
-   "build": "vite build",
-   "preview": "vite preview",
-   "type-check": "tsc --noEmit"
-   ```
-
-3. **Add missing dev dependencies.**
-   Run:
-   ```
-   npm install --save-dev typescript @types/node
-   ```
-   Both are required: `typescript` for `tsc --noEmit`, `@types/node` for
-   `path.resolve` in `vite.config.js` to resolve correctly under strict TS.
-
-4. **Verify `tsconfig.json` include paths.**
-   Confirm that `"include": ["app", "vite-env.d.ts"]` resolves correctly now
-   that `app/cesium-init.ts` and `app/vite-env.d.ts` exist. The standalone
-   `"vite-env.d.ts"` entry at root level will not match anything — remove it
-   from the include array. The `"app"` glob covers the file inside `app/`.
-
-5. **Document and decide on the three dead emissions files.**
-   Files: `zone_emissions_daily.json`, `zone_emissions_estimated.json`,
-   `zone_emissions_monthly.json`.
-   These are daily-granularity pre-computed outputs from the dissertation
-   Jupyter analysis. They are not consumed by `main.js`, which computes
-   emissions on the fly. Decision: either delete them from `public/data/`
-   (they are analysis artefacts, not app assets) or move them to
-   `analysis/outputs/` where they belong. Do not leave unused JSON files
-   in the public directory — they will be bundled and served for nothing.
-
-6. **Run `npm run build` and confirm it exits cleanly.**
-   This is the acceptance test for Phase 1b.
-
-### Dependencies
-None. This is the first phase.
-
-### Risks
-Risk: `vite-plugin-cesium` may cause build warnings about worker chunks even
-after the path fix. These are cosmetic — the build output is still valid.
-Do not chase these warnings in Phase 1b.
-
-Risk: `tsc --noEmit` will report type errors in `app/cesium-init.ts` (the
-`viewer: any` parameters and the unused `targetDistance` variable). These are
-expected and are scheduled for Phase 2. The goal of Phase 1b is a passing
-Vite build, not a clean TypeScript compilation.
-
-### Recommended next step
-Fix the `vite.config.js` draw input path first (task 1), then run
-`npm run build` to confirm. Do the remaining tasks only after confirming
-the build passes — this isolates the fix from any accidental regressions.
+This document supersedes all previous versions of PHASE_PLAN.md.
+Do not proceed to any phase without completing the phase before it.
 
 ---
 
-## Phase 2 — TypeScript tightening
+## Completed phases
+
+Phase 1b — Config and data fix: COMPLETE (commit: pre-Phase 2)
+Phase 2  — TypeScript migration: COMPLETE (commit: Phase 2)
+Phase 3  — OpenAQ live integration: COMPLETE (commit: 767d783)
+
+---
+
+## Data strategy
+
+Air quality data source: OpenAQ v3 API, location 2574 (Glasgow Townhead).
+Live feed: server polls every 15 minutes via GET /aq/latest.
+Historical fallback: public/data/g1_air_quality_animated.json
+Coverage: May 2023 to present. All four parameters (no2, pm25, pm10, o3)
+at 97-99% hourly coverage within the active window.
+
+Traffic data source: Li, Zhao and Wang (2025), Scientific Data 12:253.
+"High-resolution traffic flow data from the urban traffic control system
+in Glasgow." DOI: 10.1038/s41597-025-04494-y.
+Published by the Urban Big Data Centre, University of Glasgow.
+Licensed under Creative Commons Attribution 4.0.
+Coverage: October 2019 to September 2023, 33,644 hourly records.
+File: public/data/zone_traffic_aggregated.json
+
+AQ and traffic overlap window for correlation: May 2023 to September 2023.
+2,214 hours of aligned hourly data confirmed.
+
+Traffic live strategy: time-of-day historical profile (Position 1).
+The server computes average vehicle counts per hour-of-day and
+day-of-week from the full four-year traffic dataset, stores them
+in a profile file, and serves the profile entry matching the current
+UTC time via GET /traffic/current. This is explicitly labelled in
+the UI as a historical baseline. No external API required. No cost.
+
+Deployment strategy: local only. Railway deployment is out of scope.
+Distribution is via the GitHub repository. Any user can clone,
+add API keys to .env, and run npm run dev:all to get the full
+experience including the live AQ feed and the traffic profile.
+
+---
+
+## Phase 4 — Time-of-day traffic profile
 
 ### Objective
-Convert the entire codebase to typed TypeScript with `strict: true`, zero
-implicit `any`, and a passing `tsc --noEmit` run.
+Replace the static zone_traffic_aggregated.json slider with a live-feeling
+traffic layer that shows the historical average vehicle count for the
+current hour of day and day of week, updating every 60 minutes.
 
 ### Input state
-- `npm run build` passes (Phase 1b complete).
-- `main.js` is 859 lines of untyped JavaScript.
-- `app/cesium-init.ts` exists but uses `viewer: any` in five function signatures
-  and casts two `ScreenSpaceEventController` properties with `as any`.
-- One unused variable (`targetDistance`) exists in `cesium-init.ts`.
-- One wrong Cesium type: `new Cartesian3(0, -20, 0)` used as `pixelOffset`
-  on a label entity — should be `new Cesium.Cartesian2(0, -20)`.
-- `main.js` imports `cesium-init` using a named import of `init3dGoogleViewer`.
-  The function is exported correctly.
+- Phase 3 complete: OpenAQ live feed working, server running at port 5055.
+- Traffic data is loaded from the static file on startup and displayed
+  via the existing slider. It does not update automatically.
+- server/index.ts has one route (GET /aq/latest) and serves static files.
+- public/data/zone_traffic_aggregated.json contains 33,644 hourly records
+  across four years covering October 2019 to September 2023.
 
 ### Output state
-- `main.js` is renamed to `src/main.ts` (or `app/main.ts` — see note below).
-- All application interfaces are defined and used: `Zone`, `AQEntry`,
-  `TrafficData`, `CorrResult`, `Assumptions`, `SensorEntity`.
-- `app/cesium-init.ts` passes `tsc --noEmit` with no errors or suppressions.
-- `npm run type-check` exits with code 0.
-- `npm run build` still passes.
+- A preprocessing script (analysis/build_traffic_profile.py) reads
+  zone_traffic_aggregated.json and writes a new file
+  public/data/zone_traffic_profile.json containing average vehicle
+  counts for each combination of day-of-week (0-6) and hour-of-day (0-23).
+- server/index.ts has a new route GET /traffic/current that reads the
+  current UTC time, looks up the matching profile entry, and returns
+  { timestamp, count, dayOfWeek, hourOfDay, isProfile: true }.
+- app/main.ts polls GET /api/traffic/current every 60 minutes and
+  merges the returned count into trafficData under the current UTC
+  hour timestamp, triggering a visual update.
+- The traffic overlay in renderOverlay() displays a one-line disclaimer:
+  "Traffic: historical avg (same hour/weekday)"
+- npm run type-check passes. npm run build passes.
+- The preprocessing script is committed to analysis/ and documented.
 
 ### Concrete task list
 
-1. **Decide on source layout before writing any TypeScript.**
-   Currently `app/` contains only `cesium-init.ts` and `vite-env.d.ts`.
-   `main.js` is at the project root. The `tsconfig.json` include covers `app/`.
-   Option A: move `main.js` → `app/main.ts` and keep all source in `app/`.
-   Option B: widen `tsconfig.json` include to `["."]` and rename `main.js` → `main.ts` at root.
-   Recommendation: Option A. It is consistent with the existing `app/cesium-init.ts`
-   placement and avoids accidentally including node_modules or public files in the TS
-   compilation scope.
-
-2. **Rename `main.js` → `app/main.ts` and update `index.html`.**
-   `index.html` line 160: change `src="/main.js"` to `src="/app/main.ts"`.
-   Vite handles `.ts` entry points natively — no additional config needed.
-
-3. **Define interfaces in a new file `app/types.ts`.**
-   Minimum required interfaces:
-   ```typescript
-   interface AQEntry { no2?: number; pm25?: number; pm10?: number; o3?: number; }
-   interface TrafficData { [timestamp: string]: { [zoneId: string]: number } }
-   interface CorrResult { bestR: number; bestLag: number; n: number; all: Record<number, { r: number; n: number }> }
-   interface Assumptions {
-     shares: { car: number; lgv: number; hgv: number; bus: number };
-     ef:     { car: number; lgv: number; hgv: number; bus: number };
-     dz:     Record<string, number>;
+1. analysis/build_traffic_profile.py — CREATE
+   Read public/data/zone_traffic_aggregated.json.
+   For each record compute day-of-week (0=Monday, 6=Sunday) and
+   hour-of-day (0-23) from the timestamp string.
+   Group all G1 vehicle counts by (dayOfWeek, hourOfDay).
+   Compute the mean for each group, rounded to two decimal places.
+   Write public/data/zone_traffic_profile.json with this structure:
+   {
+     "0": { "0": 45.2, "1": 38.7, ..., "23": 52.1 },
+     "1": { "0": 43.1, ... },
+     ...
+     "6": { "0": 31.4, ... }
    }
-   interface Zone {
-     polygon: Cesium.Entity;
-     metricPolygons: Record<string, Cesium.Entity>;
-     trafficPolygon: Cesium.Entity;
-     overlay: HTMLDivElement;
-     isVisible: boolean;
-     aqMap: Record<string, AQEntry> | null;
-     latestAQ: { ts: string; values: AQEntry } | null;
-     latestTraffic: { ts: string; count: number } | null;
-     latestEmissions: { ts: string; kg: number } | null;
-     coordsRing: [number, number][];
-     sensors: Cesium.Entity[];
+   Where the outer key is day-of-week string (0=Monday, 6=Sunday)
+   and inner key is hour-of-day string (0-23).
+   Print a summary table of all 168 cells on completion.
+
+2. Run analysis/build_traffic_profile.py — COMMAND
+   Confirm the output file is written to public/data/.
+   Confirm all 168 cells (7 days x 24 hours) are populated.
+
+3. app/types.ts — EDIT
+   Add these new interfaces:
+   TrafficProfileEntry: { [hour: string]: number }
+   TrafficProfile: { [day: string]: TrafficProfileEntry }
+   TrafficCurrentResponse: {
+     timestamp: string;
+     count: number;
+     dayOfWeek: number;
+     hourOfDay: number;
+     isProfile: true;
    }
-   ```
 
-4. **Type `app/cesium-init.ts`.**
-   Replace all `viewer: any` with `viewer: Cesium.Viewer`.
-   Remove `targetDistance` (unused variable, strict mode will error).
-   Remove `init2dGoogleViewer` export (dead code — it is never imported anywhere).
-   Cast removal for `enableInputs` and `zoomToCursorEnabled`: these properties
-   are not in the public Cesium type definitions. Keep `as any` casts on these
-   two lines only, with a comment explaining why.
+4. server/index.ts — EDIT
+   Add cache variables for the traffic profile response with TTL 59 minutes.
+   Add GET /traffic/current route. The route must be inserted before
+   app.use(express.static) and before app.get(/.*/).
+   The route reads the current UTC time via new Date().
+   Extracts dayOfWeek using getUTCDay() (0=Sunday, 6=Saturday —
+   JavaScript convention).
+   Extracts hourOfDay using getUTCHours().
+   Loads zone_traffic_profile.json on first call and caches in memory.
+   Looks up profile[dayOfWeek][hourOfDay].
+   Returns TrafficCurrentResponse.
+   If the profile file cannot be read returns HTTP 503 with JSON error.
+   Never returns 200 with null or undefined count.
 
-5. **Fix the `pixelOffset` type error in `app/main.ts`.**
-   Line (formerly `main.js` line 347):
-   Change `pixelOffset: new Cartesian3(0, -20, 0)` to `pixelOffset: new Cesium.Cartesian2(0, -20)`.
-   Add `Cartesian2` to the named imports from `"cesium"`.
+   CRITICAL: The day-of-week convention must match between the Python
+   script and the JavaScript server. The Python script uses
+   0=Monday, 6=Sunday (Python weekday() convention).
+   JavaScript getUTCDay() uses 0=Sunday, 6=Saturday.
+   The server route must convert JavaScript day to Python convention:
+     const jsDow = now.getUTCDay();
+     const dow = jsDow === 0 ? 6 : jsDow - 1;
+   This ensures Sunday lookup uses key "6" and Monday uses key "0",
+   matching the profile file exactly.
 
-6. **Replace the hardcoded Wikipedia pin image with an inline SVG data URI.**
-   `billboard.image` currently points to an external Wikipedia URL with no
-   fallback. Replace with:
-   ```typescript
-   const PIN_SVG = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'
-     width='16' height='16'><circle cx='8' cy='8' r='7' fill='%23e53935'/></svg>`;
-   ```
-   This eliminates the external dependency entirely.
+5. app/main.ts — EDIT
+   Add a new function fetchLiveTraffic() that:
+   - Calls fetch("/api/traffic/current")
+   - Parses the response as TrafficCurrentResponse
+   - Builds a current UTC hour timestamp string in
+     YYYY-MM-DD HH:00:00 format using the same bucketToHour logic
+   - Inserts the count into trafficData under that key for zone G1
+   - Rebuilds trafficTimeline by re-sorting Object.keys(trafficData)
+   - Updates trafficMax if the new count exceeds the current value
+   - Calls updateTrafficAtTimestamp() with the new key
+   - On failure logs the error and does nothing (no crash)
 
-7. **Clean up dead UI: assumptions panel G2/G3/G12 distance inputs.**
-   `ZONE_NAMES = ["G1"]` is the only active zone. The assumptions panel in
-   `index.html` has inputs for `dz-G2`, `dz-G3`, `dz-G12`. These are read
-   into `assumptions.dz` by `readAssumptionsFromUI()` but have no effect.
-   Remove the three input rows from `index.html` and remove `G2`/`G3` reads
-   from `readAssumptionsFromUI()`. Leave `dz-G12` removal as a comment for
-   now — it may become relevant if G12 zone is activated in future.
+   Add a 60-minute setInterval in the main IIFE after the existing
+   aqPollInterval line:
+     const trafficPollInterval = setInterval(
+       fetchLiveTraffic, 60 * 60 * 1000
+     );
+     void trafficPollInterval;
+   Also call fetchLiveTraffic() once immediately on startup so the
+   current hour is visible without waiting 60 minutes.
 
-8. **Run `npm run type-check` and resolve all remaining errors.**
-   Do not suppress errors with `// @ts-ignore` except where documented above.
+6. app/main.ts renderOverlay() — EDIT
+   Add this disclaimer line in the traffic section of the overlay,
+   immediately after the "Vehicles/hour" line:
+     <div style="font-size:10px;opacity:0.65;margin-top:2px;">
+       Historical avg — same hour and weekday
+     </div>
+   This must only render when zone.latestTraffic is not null and
+   when the latestTraffic object has no "isLive" flag set to false.
+   The disclaimer is a hardcoded string literal injected into innerHTML.
 
 ### Dependencies
-Phase 1b must be complete.
+Phase 3 must be complete. zone_traffic_aggregated.json must exist
+at public/data/. The preprocessing script (task 1) must run
+successfully before the server route is added (task 4), because
+the route reads the profile file at runtime.
 
 ### Risks
-Risk: Cesium's TypeScript definitions are sometimes incomplete or inaccurate
-for newer API surfaces (particularly `ScreenSpaceEventController` properties).
-Where the types are genuinely wrong in the library, use `as unknown as X`
-with a comment rather than a bare `as any`.
+Risk: The day-of-week convention mismatch between Python and JavaScript
+is the most likely source of silent bugs in this phase. A wrong day
+lookup produces plausible-looking but incorrect vehicle counts with
+no error. The conversion formula in task 4 is mandatory and must be
+verified explicitly during testing by checking that Monday values
+match the profile key "0".
 
-Risk: Moving `main.js` to `app/main.ts` and updating the `index.html` script
-tag may trigger a Vite HMR cache issue on first run after the change. Clear
-`.vite/deps` if the dev server throws a stale module error.
+Risk: If trafficMax is not updated after a live traffic insert, the
+normalisation in updateTrafficAtTimestamp() may produce extrusion
+heights above the maximum or below the minimum. fetchLiveTraffic()
+must update trafficMax before calling updateTrafficAtTimestamp().
 
-### Recommended next step
-Create `app/types.ts` with all interfaces before touching `main.js`. Having the
-types defined first means the rename and rewrite of `main.js` → `app/main.ts`
-can be done in a single pass with full type coverage, rather than iteratively
-fixing cascading errors.
+Recommended next step: Write and run analysis/build_traffic_profile.py
+first and paste the summary table here before any other task begins.
+The profile file must exist and be verified before the server route
+is written.
 
 ---
 
-## Phase 3 — OpenAQ live integration
+## Phase 5 — Project hardening and local setup
 
 ### Objective
-Replace the static `g1_air_quality_animated.json` file with a live feed from
-the OpenAQ v3 API, updating on a 15-minute polling interval, and integrate
-hourly bucketing so that the existing correlation and compare-mode logic
-continues to work against live data.
+Ensure the project runs cleanly on a fresh clone with zero prior
+knowledge, tighten the codebase for public release, and produce a
+clean local development experience that any researcher can reproduce.
 
 ### Input state
-- Phase 2 complete: fully typed codebase.
-- AQ data is loaded from `/data/g1_air_quality_animated.json` as a static file.
-- `loadAllAQData()` in `main.ts` fetches this file on startup and populates
-  `zones[name].aqMap` as a `Record<string, AQEntry>` keyed by timestamp string.
-- `compareTimeline` is built as an exact string intersection of AQ and traffic
-  timestamps. This will not work with live data unless timestamps are normalised.
-- No backend server exists.
+- Phases 1b through 4 complete.
+- The project runs locally but has rough edges: the README is a draft
+  with placeholder notes, .env_template may not match the current
+  variable set, draw.html and draw.js are undocumented dev tools,
+  and the analysis/ folder has no unified documentation.
 
 ### Output state
-- A Node/Express server exists at `server/index.ts`, running on port 5055.
-- The server exposes `GET /aq/latest` which returns the last 48 hours of G1
-  AQ data from OpenAQ, bucketed to hourly intervals, in the existing
-  `Record<string, AQEntry>` schema.
-- The frontend polls this endpoint every 15 minutes and merges new entries
-  into `zones["G1"].aqMap` without a full page reload.
-- `compareTimeline` construction uses floor-to-hour bucketing on both AQ and
-  traffic timestamps before computing the intersection.
-- Historical AQ JSON files remain in `public/data/` as fallback. The app
-  loads them on startup if the `/aq/latest` endpoint is unreachable, then
-  upgrades to live data once the server responds.
+- A developer who clones the repo fresh can follow README.md and
+  have the app running in under 10 minutes.
+- npm run dev:all starts both processes cleanly with no manual steps
+  beyond filling in .env.
+- All environment variables in .env_template are current and correct.
+- The analysis/ folder has a README explaining what each script does
+  and in what order to run them.
+- Unused or confusing files are cleaned up or documented.
+- npm run type-check and npm run build both pass cleanly.
 
 ### Concrete task list
 
-1. **Create `server/` directory and initialise a TypeScript Express app.**
-   Files to create: `server/index.ts`, `server/routes/aq.ts`,
-   `server/services/openaq.ts`, `server/tsconfig.json`.
-   Add `express` and `node-fetch` (or use native `fetch` if Node >= 18)
-   to `package.json` dependencies. Add a `"server"` script:
-   `"server": "tsx server/index.ts"`.
+1. Audit .env_template against all variables used in the codebase.
+   Add any missing variables, remove any stale ones, annotate each
+   with a comment explaining where to obtain the value.
+   Current expected variables:
+   VITE_CESIUM_ION_TOKEN — from cesium.ion dashboard
+   VITE_GOOGLE_MAPS_API_KEY — from Google Cloud Console
+   OPENAQ_API_KEY — from explore.openaq.org/register
 
-2. **Implement `server/services/openaq.ts`.**
-   Target endpoint: `https://api.openaq.org/v3/locations/{locationId}/measurements`
-   with parameters `limit=100&order_by=datetime&sort=desc`.
-   The location ID for Glasgow G1 is `2574` (confirmed from the existing
-   `openaq_location_2574_measurments_g1_main.csv` filename).
-   Parse the response into `Record<string, AQEntry>` using floor-to-hour
-   bucketing: `new Date(Math.floor(ts / 3600000) * 3600000).toISOString()`.
-   Average multiple readings that fall into the same hour bucket.
+2. Audit package.json scripts. Confirm all scripts work on a fresh
+   npm install. Add:
+   "clean": "rimraf dist"
+   Install rimraf as a dev dependency for cross-platform compatibility.
 
-3. **Implement `server/routes/aq.ts`.**
-   Cache the OpenAQ response in memory for 14 minutes (OpenAQ rate limit
-   is 60 requests/minute on the free tier; polling every 15 minutes is safe).
-   Return the cached result immediately on subsequent requests within the
-   cache window. Return HTTP 503 with a JSON error body if the upstream
-   call fails — do not return a 200 with empty data.
+3. Move the raw OpenAQ CSV files from public/data/ to analysis/data/.
+   These files are not used by the running app and should not be
+   served as public assets or included in the Vite build.
+   Files to move: all openaq_location_*.csv files.
+   Update .gitignore if needed.
 
-4. **Add hourly bucketing to `compareTimeline` construction in `app/main.ts`.**
-   The current intersection logic uses exact string equality on timestamp keys.
-   Add a `bucketToHour(ts: string): string` utility that floors any timestamp
-   string to `YYYY-MM-DD HH:00:00`. Apply this when building both `aqiTimeline`
-   and `trafficTimeline` before computing the intersection.
+4. Delete public/data/g1_air_quality_animated.json.bak — this is
+   the backup created by the fetch script and has no place in git.
+   Add *.bak to .gitignore to prevent future backups being committed.
 
-5. **Add live polling to the frontend.**
-   In `app/main.ts`, after initial load, call `setInterval` every 15 minutes
-   to fetch `/api/aq/latest` and merge new entries into `zones["G1"].aqMap`.
-   Regenerate `aqiTimeline` and `compareTimeline` after each merge.
-   Update the slider `max` attribute if the timeline has grown.
+5. Write analysis/README.md documenting:
+   - fetch_extended_aq.py: purpose, when to run, dependencies,
+     expected output
+   - build_traffic_profile.py: purpose, when to run, dependencies,
+     expected output
+   - 01_g1_corr.ipynb: purpose, key findings, how to run
 
-6. **Add graceful fallback to historical data.**
-   On startup, attempt `/api/aq/latest` first. If it fails (network error or
-   non-200), fall back to loading `g1_air_quality_animated.json` from
-   `public/data/`. Log clearly which source was used.
+6. Add a comment block at the top of src/dev/draw.js explaining
+   it is a development tool for drawing zone boundaries in the
+   Cesium viewer and outputting GeoJSON, not part of the main app.
 
-7. **Update `vite.config.js` proxy to ensure `/api/aq` routes to the server.**
-   The existing proxy already covers `/api` → `localhost:5055`. No change
-   needed unless the Express router is mounted at a different prefix.
+7. Run npm run build one final time and confirm clean output.
+   Run npm run type-check and confirm zero errors.
 
-8. **Test both live and fallback paths locally before marking phase complete.**
-
-### Dependencies
-Phase 2 must be complete. An OpenAQ API key is required (free tier, register
-at https://openaq.org). Add `VITE_OPENAQ_API_KEY` to `.env`.
-
-### Risks
-Risk: OpenAQ free tier enforces a rate limit of 60 requests/minute. Polling
-every 15 minutes from the server (not the browser) means one request per
-15-minute interval — well within the limit. Do not poll from the browser
-directly; it would multiply the request count by the number of open tabs.
-
-Risk: OpenAQ data for Glasgow G1 (location 2574) may have gaps of several
-hours in the live feed, as it did in the historical dataset (coverage was
-~97% for NO2, ~96% for PM2.5). The bucketing logic must tolerate missing
-hours without crashing the correlation computation.
-
-Risk: The live AQ schema from OpenAQ v3 differs from the pre-processed
-`AQEntry` shape. The raw API returns individual parameter readings as
-separate objects in a `results` array, not as a combined object per
-timestamp. The `openaq.ts` service must aggregate these explicitly.
-
-### Recommended next step
-Build and test `server/services/openaq.ts` in isolation first — write a
-standalone script that calls the API and prints the bucketed output — before
-wiring it into the Express routes or touching the frontend.
-
----
-
-## Phase 4 — Google Maps traffic integration
-
-### Objective
-Replace the static `zone_traffic_aggregated.json` file with a live traffic
-feed and integrate it into the existing traffic visualisation and CO2
-estimation layer.
-
-### Unresolved architectural decision (must be resolved before coding begins)
-
-The current app model requires a single integer per zone per hour:
-`trafficData[timestamp]["G1"] = vehicleCount`. This feeds the CO2 estimator
-(`vehicleCount × effectiveEF × distanceInZone`) and the Pearson correlation.
-
-The Google Maps Roads API (`roads.googleapis.com/v1/speedLimits` and
-`snapToRoads`) returns speed ratios per individual road segment, not vehicle
-counts per zone. The two options are:
-
-**Option A: Speed-to-count proxy via linear scaling.**
-Map each road segment's current speed ratio (current / speed limit) to an
-estimated flow using the Greenshields linear speed-flow model:
-`flow ≈ k_jam × speed_ratio × (1 - speed_ratio)` where `k_jam` is an assumed
-jam density (vehicles/km). Sum flows across all road segments within the G1
-polygon to get a zone-level vehicle count.
-Tradeoff: requires assuming `k_jam` (a free parameter with no ground truth
-in this dataset), introduces significant uncertainty into the CO2 estimate,
-and the Greenshields model is a gross simplification of real traffic dynamics.
-The CO2 estimate becomes a proxy of a proxy.
-
-**Option B: Use the Distance Matrix API or Routes API to estimate throughput
-from travel-time degradation.**
-Query a set of origin-destination pairs within G1 every 15 minutes. Compute
-the ratio of live travel time to free-flow travel time. Use this degradation
-ratio as a relative traffic index rather than an absolute vehicle count.
-Rescale to the historical vehicle count range from `zone_traffic_aggregated.json`
-to maintain visual continuity with the existing extrusion heights.
-Tradeoff: the output is a dimensionless index, not a vehicle count. The CO2
-estimate becomes meaningless in absolute terms. The correlation analysis
-remains valid as a relative measure.
-
-Recommended next step: Adopt Option B for the visualisation layer (it is
-more honest about what the API provides) but retain the historical
-`zone_traffic_aggregated.json` as the baseline for correlation analysis.
-Live traffic feeds the visual extrusion only; the correlation panel should
-display a note that it reflects the historical analysis window, not live data.
-Resolve this explicitly with a written decision before writing any Phase 4
-code, and update this plan accordingly.
-
-### Input state
-- Phase 3 complete: OpenAQ live feed working.
-- Traffic data loaded from static `public/data/zone_traffic_aggregated.json`.
-- The architectural decision above has been made and documented.
-
-### Output state
-- `server/routes/traffic.ts` exposes `GET /traffic/latest` returning the
-  current traffic index for G1, normalised to the historical vehicle count
-  range.
-- The frontend polls this endpoint every 5 minutes (traffic changes faster
-  than AQ) and updates the traffic extrusion in real time.
-- Historical traffic data remains available for the correlation panel.
-- The CO2 estimate panel carries a disclaimer that live values are index-based.
-
-### Concrete task list (contingent on architectural decision)
-
-1. Enable the Google Maps Roads API and Distance Matrix API in Google Cloud Console.
-   Add `VITE_GOOGLE_MAPS_API_KEY` if not already present (it is already in
-   `.env` for the tileset — confirm it has Roads API permission enabled).
-
-2. Create `server/services/traffic.ts`.
-   Define a fixed set of 6-8 origin-destination pairs within the G1 bounding
-   box. Query the Routes API for live travel times. Compute degradation ratio
-   against free-flow baseline derived from the historical dataset.
-
-3. Create `server/routes/traffic.ts`. Cache results for 4 minutes.
-
-4. Update `loadTrafficData()` in `app/main.ts` to poll `/api/traffic/latest`
-   after loading the historical baseline. Merge live entries into `trafficData`.
-
-5. Add a visible label to the traffic overlay indicating when the data is live
-   vs historical.
-
-6. Test that CO2 estimates update correctly and that the disclaimer is visible.
-
-### Dependencies
-Phase 3 must be complete. Google Maps Roads API must be enabled on the
-existing Google Cloud project. The architectural decision documented above
-must be confirmed in writing before task 1 begins.
-
-### Risks
-Risk: The Google Maps Roads API is not free. Routes API requests are billed
-per query. With 8 OD pairs polled every 5 minutes, this is approximately
-2,300 requests per day. Verify this is within budget before enabling billing.
-
-Risk: The `VITE_GOOGLE_MAPS_API_KEY` currently in `.env` is used for the
-Cesium photorealistic tileset (Google Photorealistic 3D Tiles). Adding Roads
-API access to the same key is fine, but the key must have the correct API
-restrictions updated in the Google Cloud Console.
-
-### Recommended next step
-Before writing any code, manually call the Routes API from the command line
-with your existing API key to confirm it has the right permissions, then
-measure the response time and confirm the OD pairs fall within the G1 boundary.
-
----
-
-## Phase 5 — Docker and Railway deployment
-
-### Objective
-Package the application as a Docker container and deploy it to Railway with a
-live public URL.
-
-### Input state
-- Phase 4 complete: both live feeds working locally.
-- The app has a frontend (Vite build output) and a backend (Express server).
-- No Dockerfile, `.dockerignore`, or Railway config exists.
-
-### Output state
-- A single Docker image builds the frontend and serves it alongside the
-  Express API using a multi-stage Dockerfile.
-- Railway deployment runs from this image.
-- All environment variables are set in the Railway dashboard, not in the image.
-- A live public URL exists and the app loads correctly from a fresh browser
-  with no localhost dependency.
-
-### Concrete task list
-
-1. **Write a multi-stage `Dockerfile`.**
-   Stage 1 (builder): `node:20-alpine`, install deps, run `npm run build`.
-   Stage 2 (runtime): `node:20-alpine`, copy built frontend to `dist/`,
-   copy `server/` source, install production deps only, start Express.
-   The Express server must serve the Vite `dist/` directory as static files
-   in addition to the `/api` routes. Add `express.static` middleware pointing
-   at `dist/`.
-
-2. **Write `.dockerignore`.**
-   Exclude: `node_modules/`, `.env`, `analysis/`, `doc/`, `*.pptx`,
-   `public/data/*.csv`, `public/data/zone_emissions_*.json`.
-
-3. **Confirm Express listens on `process.env.PORT || 5055`.**
-   Railway injects `PORT` as an environment variable. The server must not
-   hardcode 5055 as the only option.
-
-4. **Create `railway.json` (or `railway.toml`) at the project root.**
-   Set `build.dockerfilePath = "Dockerfile"` and `deploy.startCommand`
-   if Railway cannot infer it from the Dockerfile `CMD`.
-
-5. **Create a Railway project and link to the GitHub repository.**
-   Set all environment variables in the Railway dashboard:
-   `VITE_CESIUM_ION_TOKEN`, `VITE_GOOGLE_MAPS_API_KEY`, `OPENAQ_API_KEY`.
-   Note: Vite embeds `VITE_*` variables at build time. This means the
-   Docker build stage must have access to these variables. In Railway, set
-   them as build arguments in addition to runtime environment variables.
-
-6. **Trigger a deploy and verify the live URL.**
-   Acceptance test: open the URL in a fresh incognito window. The 3D Glasgow
-   map should load, the AQ and traffic overlays should populate within 30
-   seconds, and the assumptions panel should function.
+8. Commit all changes:
+   git add .
+   git commit -m "Phase 5: project hardening and local setup"
+   git push origin main
 
 ### Dependencies
 Phase 4 must be complete.
 
 ### Risks
-Risk: `VITE_*` variables are baked into the JavaScript bundle at build time by
-Vite. If Railway runs the Docker build without these variables available as
-build args, the tileset and geocoder will fail silently in the deployed build.
-This is the most common deployment failure for Vite + CesiumJS apps on Railway.
-Verify this explicitly by checking the Railway build log for the variable names.
+Risk: The openaq_location_*.csv files in public/data/ are each
+100-700KB. Moving them to analysis/data/ reduces the public asset
+footprint and prevents Vite from processing them unnecessarily.
 
-Risk: The Google Photorealistic 3D Tiles Terms of Service require that the
-tileset is only used within Google Maps contexts. Deploying to a public URL
-on Railway is technically permitted, but ensure the `onlyUsingWithGoogleGeocoder: true`
-flag remains set in `cesium-init.ts` — removing it may violate the ToS.
+Risk: *.bak files committed to git cannot be easily removed from
+history without a rebase. Catch them with .gitignore now.
 
-Risk: The Cesium Ion token is tied to a user account with a free-tier monthly
-request limit. A public deployment will consume this quota faster. Monitor
-usage in the Cesium Ion dashboard after deployment.
-
-### Recommended next step
-Build the Docker image locally first (`docker build -t gcm .`) and run it
-with `docker run -p 5055:5055 --env-file .env gcm` before pushing to Railway.
-This confirms the multi-stage build works before introducing Railway's build
-pipeline.
+Recommended next step: Start with the .env_template audit. Every
+variable must be correct before a fresh-clone test is meaningful.
 
 ---
 
 ## Phase 6 — README and documentation
 
 ### Objective
-Produce a complete, professional README that serves as both a technical
-reference for developers and a demonstration document for the MSc dissertation
-portfolio.
+Produce a complete, professional README.md that serves as both a
+technical reference and a dissertation portfolio document.
 
 ### Input state
-- Phase 5 complete: live public URL exists.
-- A `README` file (no extension) exists at root. Its contents are unknown —
-  review before writing the new one.
+- Phase 5 complete: project runs cleanly on a fresh clone.
+- A README file (no .md extension) exists at root with draft content
+  including placeholder notes ("I haven't done this yet").
+- Screenshots do not exist yet.
 
 ### Output state
-- `README.md` at the project root (replace the existing `README`).
-- Covers: project description, live demo link, methodology summary,
-  architecture overview, local setup instructions, environment variable
-  reference, and a note on the dissertation context.
-- At least two screenshots embedded (3D map view, correlation overlay).
+- README.md at the project root replaces the existing README file.
+- Covers all sections listed below in full.
+- Two screenshots embedded from doc/screenshots/.
+- All links are valid.
 
-### Concrete task list
+### README sections required
 
-1. Delete or archive the existing `README` file.
-2. Write `README.md` covering the sections listed below.
-3. Take screenshots of the running app: one showing the AQ extrusion view,
-   one showing the compare mode with correlation values in the overlay.
-4. Add screenshots to a `doc/screenshots/` directory and embed in the README.
-5. Verify all links (live demo URL, OpenAQ location page, Cesium Ion) are valid.
+1. Project title and one-sentence description
 
-### README sections (required)
+2. Screenshots — two inline images:
+   - The 3D Glasgow map with AQ extrusion visible
+   - Compare mode with correlation values in the overlay panel
 
-- **Project title and one-sentence description**
-- **Live demo** — link to Railway URL
-- **Screenshots** — two inline images
-- **What this is** — dissertation context, Glasgow G1, the research question
-  (lagged correlation between traffic and AQ), CO2 estimation methodology
-- **Correlation findings** — state the key results from the dissertation:
-  NO2 r=0.190 at lag -14h (AQ leads), O3 r=-0.398 at lag -18h (AQ leads).
-  PM2.5 and PM10 were not statistically significant at the minimum n threshold.
-- **Architecture** — brief description of the tech stack: CesiumJS, Vite,
-  TypeScript, Express, OpenAQ API, Google Maps APIs, Docker, Railway
-- **Local setup** — step-by-step: clone, `npm install`, copy `.env_template`
-  to `.env`, fill in keys, `npm run dev`
-- **Environment variables** — table: name, purpose, where to obtain
-- **Data sources** — OpenAQ location 2574 (G1), Google Photorealistic 3D Tiles,
-  historical traffic data (source to be confirmed)
-- **Limitations and caveats** — CO2 estimate methodology, traffic index proxy,
-  single-zone focus
+3. What this is — dissertation context, University of Glasgow MSc
+   Computing Science, Glasgow G1 postcode zone, the research question
+   (do hourly traffic volumes predict air quality changes, and at
+   what lag?), CO2 estimation methodology summary
+
+4. Correlation findings — the key results from the analysis:
+   NO2:  r=0.190 at lag -14h (AQ leads traffic), n=939,
+         95% CI [0.128, 0.251] — statistically significant
+   O3:   r=-0.398 at lag -18h (AQ leads traffic), n=931,
+         95% CI [-0.450, -0.342] — statistically significant
+   PM2.5: r=-0.049 at lag -9h, n=908,
+          95% CI [-0.114, 0.016] — not significant
+   PM10:  r=0.048 at lag +20h, n=897,
+          95% CI [-0.017, 0.114] — not significant
+
+5. Architecture — CesiumJS + Vite + TypeScript frontend,
+   Express backend, OpenAQ v3 API for live AQ,
+   Glasgow SCOOT historical traffic dataset,
+   Google Photorealistic 3D Tiles via Cesium Ion
+
+6. Local setup — step by step:
+   Prerequisites: Node.js >= 18, Python >= 3.10 (for analysis scripts)
+   1. Clone the repository
+   2. npm install
+   3. Copy .env_template to .env and fill in all three keys
+   4. npm run dev:all
+   5. Open http://localhost:3000
+
+7. Environment variables — table with columns:
+   Variable name | Purpose | Where to obtain | Required
+
+8. Data sources — with full citations:
+   OpenAQ location 2574 (Glasgow Townhead, UK)
+   Li Y, Zhao Q, Wang M (2025). High-resolution traffic flow data
+   from the urban traffic control system in Glasgow.
+   Scientific Data 12:253. DOI: 10.1038/s41597-025-04494-y.
+   Google Photorealistic 3D Tiles via Cesium Ion
+
+9. How to use the app — brief walkthrough of the three modes
+   (AQ, Traffic, Compare), the pin click to open zone overlays,
+   the correlation panel, and the assumptions panel
+
+10. Limitations and caveats:
+    CO2 estimate is a first-order approximation using fleet share
+    assumptions — not suitable for official reporting.
+    Traffic layer shows a historical time-of-day average, not
+    live vehicle counts. Explicitly labelled in the UI.
+    AQ data covers May 2023 to present for this location.
+    Analysis focuses on G1 postcode zone only.
+
+11. Licence and attribution —
+    Code: MIT licence
+    Traffic data: CC BY 4.0, cite Li et al. (2025)
+    AQ data: OpenAQ open licence
 
 ### Dependencies
-Phase 5 must be complete. Screenshots cannot be taken until the live
-deployment exists.
+Phase 5 must be complete. Screenshots require the app to be running.
 
 ### Risks
-Risk: The existing `README` file at root may contain dissertation-sensitive
-content. Review it before deleting.
+Risk: The existing README file contains draft notes. Review it before
+deleting — some content may be worth preserving.
 
-### Recommended next step
-Write the README structure first (all section headings with placeholder text),
-then fill in sections in order of importance: demo link and screenshots first,
-methodology and findings second, setup instructions third.
+Recommended next step: Take the two screenshots first before writing
+any prose. Screenshots are the hardest asset to retrofit and having
+them locks in the visual presentation early.

@@ -1,4 +1,5 @@
 import "dotenv/config";
+import fs from "fs";
 import express from "express";
 import cors from "cors";
 import path from "path";
@@ -78,6 +79,46 @@ app.get("/aq/latest", async (req, res) => {
   } catch (error) {
     console.error("Failed to fetch live AQ data:", error);
     res.status(500).json({ error: "Failed to fetch live AQ data" });
+  }
+});
+
+let cachedTrafficProfile: Record<string, Record<string, number>> | null = null;
+let trafficCacheTimestamp = 0;
+const TRAFFIC_CACHE_TTL_MS = 59 * 60 * 1000;
+
+app.get("/traffic/current", (req, res) => {
+  try {
+    const now = new Date();
+    
+    if (!cachedTrafficProfile || (Date.now() - trafficCacheTimestamp) >= TRAFFIC_CACHE_TTL_MS) {
+      const p = path.join(__dirname, "../public/data/zone_traffic_profile.json");
+      cachedTrafficProfile = JSON.parse(fs.readFileSync(p, "utf-8"));
+      trafficCacheTimestamp = Date.now();
+    }
+    
+    const jsDow = now.getUTCDay();
+    const dow = jsDow === 0 ? 6 : jsDow - 1;
+    const hourOfDay = now.getUTCHours();
+    
+    const count = cachedTrafficProfile![String(dow)]?.[String(hourOfDay)];
+    
+    if (count === undefined || count === null) {
+      return res.status(503).json({ error: "Traffic profile entry not found" });
+    }
+    
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    const timestamp = `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-${pad(now.getUTCDate())} ${pad(hourOfDay)}:00:00`;
+    
+    res.json({
+      timestamp,
+      count,
+      dayOfWeek: dow,
+      hourOfDay,
+      isProfile: true
+    });
+  } catch (error) {
+    console.error("Failed to load traffic profile:", error);
+    res.status(503).json({ error: "Failed to load traffic profile" });
   }
 });
 

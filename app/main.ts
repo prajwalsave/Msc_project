@@ -9,7 +9,7 @@ import "cesium/Build/Cesium/Widgets/widgets.css";
 import { init3dGoogleViewer } from "./cesium-init";
 import {
   AQMetricConfig, AQData, TrafficData, ZoneFeature, CorrelationResult,
-  Assumptions, ZoneState, ZonesMap, AppMode, AQDataEntry
+  Assumptions, ZoneState, ZonesMap, AppMode, AQDataEntry, TrafficCurrentResponse
 } from "./types";
 
 /* ===================== CONFIG ===================== */
@@ -220,6 +220,35 @@ async function loadTrafficData(): Promise<void> {
     if (lab) lab.textContent = trafficTimeline[0] ? fmt(trafficTimeline[0]) : "—";
     console.log(`✅ Traffic loaded (${trafficTimeline.length} timestamps). max=${trafficMax}`);
   } catch (err) { console.error("❌ Traffic load failed:", err); }
+}
+
+async function fetchLiveTraffic(): Promise<void> {
+  try {
+    const res = await fetch("/api/traffic/current");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data: TrafficCurrentResponse = await res.json();
+    
+    const currentTs = bucketToHour(new Date().toISOString());
+    
+    if (!trafficData[currentTs]) trafficData[currentTs] = {};
+    trafficData[currentTs]["G1"] = data.count;
+    
+    if (data.count > trafficMax) {
+      trafficMax = data.count;
+    }
+    
+    trafficTimeline = Object.keys(trafficData).sort();
+    
+    const tSlider = document.getElementById("traffic-slider") as HTMLInputElement;
+    if (tSlider) tSlider.max = Math.max(0, trafficTimeline.length - 1).toString();
+    
+    const tset = new Set(trafficTimeline);
+    compareTimeline = aqiTimeline.filter(ts => tset.has(ts));
+    
+    updateTrafficAtTimestamp(currentTs);
+  } catch (err) {
+    console.error("❌ Live traffic fetch failed:", err);
+  }
 }
 
 async function loadZones(viewer: Viewer): Promise<void> {
@@ -543,6 +572,9 @@ function renderOverlay(zoneId: string): void {
     if (tr) {
       html += `<hr style="border-color:rgba(255,255,255,0.25)">`;
       html += `<b>Traffic (${tr.ts})</b><br>Vehicles/hour: ${tr.count}`;
+      html += `<div style="font-size:10px;opacity:0.65;margin-top:2px;">
+    Historical avg \u2014 same hour and weekday
+  </div>`;
       if (em && em.kg != null) html += `<br>Est. CO₂: ${fmt1(em.kg)} kg/h`;
     } else html += `<hr style="border-color:rgba(255,255,255,0.25)"><b>Traffic:</b> —`;
   }
@@ -902,4 +934,10 @@ function readAssumptionsFromUI(): void {
     triggerRefreshForCurrentMode();
   }, 15 * 60 * 1000);
   void aqPollInterval;
+
+  const trafficPollInterval = setInterval(
+    fetchLiveTraffic, 60 * 60 * 1000
+  );
+  void trafficPollInterval;
+  await fetchLiveTraffic();
 })();

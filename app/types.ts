@@ -18,6 +18,22 @@ export type AQData = Record<string, AQDataEntry>;
 export type TrafficDataEntry = Record<string, number>;
 export type TrafficData = Record<string, TrafficDataEntry>;
 
+export interface TrafficProfileEntry {
+  [hour: string]: number;
+}
+
+export interface TrafficProfile {
+  [day: string]: TrafficProfileEntry;
+}
+
+export interface TrafficCurrentResponse {
+  timestamp: string;
+  count: number;
+  dayOfWeek: number;
+  hourOfDay: number;
+  isProfile: true;
+}
+
 export interface ZoneFeatureProperties {
   zoneId: string;
   pin?: [number, number];
