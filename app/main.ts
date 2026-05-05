@@ -17,22 +17,22 @@ import {
 const ZONE_NAMES: string[] = ["G1"]; // focus on G1 only
 
 const AQ_METRICS: Record<string, AQMetricConfig> = {
-  no2:  { label: "NO₂",   color: Color.fromCssColorString("#ffd54f").withAlpha(0.55), scale: 10 },
-  pm25: { label: "PM2.5", color: Color.fromCssColorString("#ef5350").withAlpha(0.55), scale: 12 },
-  pm10: { label: "PM10",  color: Color.fromCssColorString("#42a5f5").withAlpha(0.55), scale: 8  },
-  o3:   { label: "O₃",    color: Color.fromCssColorString("#66bb6a").withAlpha(0.55), scale: 9  }
+  no2:  { label: "NO₂",   color: Color.fromCssColorString("#ffd54f").withAlpha(0.75), scale: 10, hex: "#ffd54f" },
+  pm25: { label: "PM2.5", color: Color.fromCssColorString("#ef5350").withAlpha(0.75), scale: 12, hex: "#ef5350" },
+  pm10: { label: "PM10",  color: Color.fromCssColorString("#42a5f5").withAlpha(0.75), scale: 8,  hex: "#42a5f5" },
+  o3:   { label: "O₃",    color: Color.fromCssColorString("#66bb6a").withAlpha(0.75), scale: 9,  hex: "#66bb6a" }
 };
-const BASE_HEIGHT: number = 1000;
+const BASE_HEIGHT: number = 120;
 
 // Traffic visuals
-const TRAFFIC_BASE_HEIGHT: number = 950;
-const TRAFFIC_MAX_DELTA: number   = 700;
-const TRAFFIC_ALPHA: number       = 0.45;
+const TRAFFIC_BASE_HEIGHT: number = 110;
+const TRAFFIC_MAX_DELTA: number   = 600;
+const TRAFFIC_ALPHA: number       = 0.65;
 const TRAFFIC_COLOR: Color       = Color.fromCssColorString("#ff9800").withAlpha(TRAFFIC_ALPHA);
 
 // Footprint gaps (meters)
-const AQ_GAP_M: number      = 120;
-const TRAFFIC_GAP_M: number = 440;
+const AQ_GAP_M: number      = 50;
+const TRAFFIC_GAP_M: number = 180;
 
 /* ===== Overlay layout (masonry) ===== */
 const OVERLAY_WIDTH: number       = 320;
@@ -61,6 +61,12 @@ let trafficData: TrafficData = {};         // { ts: { G1: count } }
 let trafficMax: number = 1;
 let mode: AppMode = "compare";         // "aqi" | "traffic" | "compare"
 
+interface MetricRange { min: number; max: number; }
+const aqRanges: Record<string, MetricRange> = {};
+const AQ_MAX_EXTRUSION = 600;
+
+let animationInterval: any = null;
+
 // corrCache[zoneId][metric] = {bestR, bestLag, n, all:{lag->r}}
 const corrCache: Record<string, Record<string, CorrelationResult>> = {};
 
@@ -85,6 +91,65 @@ function offsetPolygonMeters(coords: [number, number][], metersEast: number, met
 }
 const fmt  = (ts: string): string => ts;
 const fmt1 = (x: any): string => (x==null || isNaN(x) ? "—" : Number(x).toFixed(2));
+
+function formatTimestamp(ts: string | undefined): string {
+  if (!ts) return "—";
+  const d = new Date(ts.replace(" ", "T"));
+  if (isNaN(d.getTime())) return ts;
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const day = d.getUTCDate();
+  const month = months[d.getUTCMonth()];
+  const year = d.getUTCFullYear();
+  const hours = d.getUTCHours().toString().padStart(2, '0');
+  const mins = d.getUTCMinutes().toString().padStart(2, '0');
+  return `${day} ${month} ${year}, ${hours}:${mins}`;
+}
+
+function computeAQRanges(): void {
+  for (const key of Object.keys(AQ_METRICS)) {
+    aqRanges[key] = { min: Infinity, max: -Infinity };
+  }
+  for (const zoneId of ZONE_NAMES) {
+    const aqMap = zones[zoneId]?.aqMap;
+    if (!aqMap) continue;
+    for (const entry of Object.values(aqMap)) {
+      for (const [key, val] of Object.entries(entry as any)) {
+        if (AQ_METRICS[key] && typeof val === 'number' && isFinite(val)) {
+          if (val < aqRanges[key].min) aqRanges[key].min = val;
+          if (val > aqRanges[key].max) aqRanges[key].max = val;
+        }
+      }
+    }
+  }
+}
+
+function clearAnimation(): void {
+  if (animationInterval !== null) {
+    clearInterval(animationInterval);
+    animationInterval = null;
+  }
+  document.querySelectorAll(".play-pause-btn")
+    .forEach(btn => (btn as HTMLButtonElement).textContent = "▶");
+}
+
+function toggleAnimation(sliderId: string, btnId: string): void {
+  const btn = document.getElementById(btnId) as HTMLButtonElement;
+  if (animationInterval !== null) {
+    clearAnimation();
+    return;
+  }
+  
+  // Clear any existing just in case
+  clearAnimation();
+  
+  btn.textContent = "⏸";
+  animationInterval = setInterval(() => {
+    const slider = document.getElementById(sliderId) as HTMLInputElement;
+    let next = (parseInt(slider.value) + 1) % (parseInt(slider.max) + 1);
+    slider.value = next.toString();
+    slider.dispatchEvent(new Event("input"));
+  }, 500);
+}
 function setGroupVisible(id: string, visible: boolean): void {
   const el = document.getElementById(id);
   if (!el) { console.warn(`⚠️ Missing element #${id}`); return; }
@@ -192,6 +257,7 @@ async function loadAllAQData(): Promise<void> {
     
     Object.keys(zones[name].aqMap!).forEach(k => keyset.add(k));
   }
+  computeAQRanges();
   aqiTimeline = Array.from(keyset).sort();
   const slider = document.getElementById("aqi-slider") as HTMLInputElement;
   if (slider) slider.max = Math.max(0, aqiTimeline.length - 1).toString();
@@ -558,40 +624,61 @@ function renderOverlay(zoneId: string): void {
   const tr = zone.latestTraffic;
   const em = zone.latestEmissions;
 
-  let html = `<strong>📍 ${zoneId}</strong>`;
+  let html = `<div class="overlay-header">
+    <strong>📍 ${zoneId}</strong>
+    <span style="float:right; opacity:0.7">${formatTimestamp(aq?.ts || tr?.ts)}</span>
+  </div>`;
+
   if (mode !== "traffic") {
     if (aq) {
-      html += `<br><b>Air Quality (${aq.ts})</b>`;
+      html += `<div class="aq-section" style="margin-top:8px">`;
       for (const [k,cfg] of Object.entries(AQ_METRICS)) {
         const val = (aq.values as any)?.[k];
-        if (val != null) html += `<br>${cfg.label}: ${val} µg/m³`;
+        html += `<div style="display:flex; align-items:center; gap:8px; margin-bottom:2px">
+          <span class="swatch" style="background:${cfg.hex}; width:10px; height:10px; border:1px solid rgba(255,255,255,0.2)"></span>
+          <span style="flex:1">${cfg.label}:</span>
+          <strong>${fmt1(val)}</strong> <small>µg/m³</small>
+        </div>`;
       }
+      html += `</div>`;
     } else html += `<br><b>Air Quality:</b> —`;
   }
+
   if (mode !== "aqi") {
     if (tr) {
-      html += `<hr style="border-color:rgba(255,255,255,0.25)">`;
-      html += `<b>Traffic (${tr.ts})</b><br>Vehicles/hour: ${tr.count}`;
-      html += `<div style="font-size:10px;opacity:0.65;margin-top:2px;">
-    Historical avg \u2014 same hour and weekday
-  </div>`;
-      if (em && em.kg != null) html += `<br>Est. CO₂: ${fmt1(em.kg)} kg/h`;
-    } else html += `<hr style="border-color:rgba(255,255,255,0.25)"><b>Traffic:</b> —`;
+      html += `<hr style="opacity:0.2; margin:8px 0">
+        <div style="display:flex; justify-content:space-between">
+          <span>Traffic:</span>
+          <strong>${tr.count} <small>veh/h</small></strong>
+        </div>
+        <div style="font-size:10px; opacity:0.6">Historical avg — same hour/weekday</div>`;
+      if (em) {
+        html += `<div style="display:flex; justify-content:space-between; margin-top:4px">
+          <span>Est. CO₂:</span>
+          <span style="color:#ffcc80"><strong>${fmt1(em.kg)}</strong> <small>kg/h</small></span>
+        </div>`;
+      }
+    } else html += `<hr style="opacity:0.2; margin:8px 0"><b>Traffic:</b> —`;
   }
 
   if (mode === "compare") {
+    html += `<hr style="opacity:0.2; margin:8px 0"><strong>Correlation (±24h)</strong>`;
     const cc = corrCache[zoneId] || {};
     const lines = [];
     for (const key of Object.keys(AQ_METRICS)) {
       const c = cc[key];
       if (c && isFinite(c.bestR) && c.n >= MIN_CORR_N) {
-        const leadlag = c.bestLag < 0 ? "AQ leads" : (c.bestLag > 0 ? "AQ lags" : "simult.");
-        lines.push(`${AQ_METRICS[key].label}: r=${fmt1(c.bestR)} @ ${c.bestLag} h (${leadlag})`);
+        const rAbs = Math.abs(c.bestR);
+        html += `<div style="margin-top:4px">
+          <div style="display:flex; justify-content:space-between; font-size:11px">
+            <span>${AQ_METRICS[key].label} vs Traffic</span>
+            <span>r = ${fmt1(c.bestR)}</span>
+          </div>
+          <div style="height:4px; background:rgba(255,255,255,0.1); margin-top:2px; border-radius:2px">
+            <div style="height:100%; width:${rAbs * 100}%; background:#4fc3f7; border-radius:2px"></div>
+          </div>
+        </div>`;
       }
-    }
-    if (lines.length) {
-      html += `<hr style="border-color:rgba(255,255,255,0.25)">`;
-      html += `<b>Correlation (±24h) vs Traffic</b><br>${lines.join("<br>")}`;
     }
   }
 
@@ -610,7 +697,10 @@ function updateAQAtTimestamp(ts: string): void {
       if (!poly || !poly.polygon) continue;
       const val = (entry as any)?.[key];
       if (val != null && !isNaN(val)) {
-        const h = BASE_HEIGHT + val * cfg.scale;
+        const range = aqRanges[key];
+        const span = range.max - range.min;
+        const norm = span > 0 ? (val - range.min) / span : 0;
+        const h = BASE_HEIGHT + norm * AQ_MAX_EXTRUSION;
         (poly.polygon.extrudedHeight as any) = h;
         (poly.polygon.show as any) = (mode !== "traffic");
       } else {
@@ -652,8 +742,15 @@ function updateTrafficAtTimestamp(ts: string): void {
 /* ===================== MODES ===================== */
 
 function setMode(newMode: AppMode): void {
+  clearAnimation();
   mode = newMode;
   console.log(`🟦 setMode('${newMode}')`);
+  
+  // Update UI active state
+  document.querySelectorAll(".toolbar .cesium-button").forEach(btn => btn.classList.remove("active"));
+  if (newMode === "aqi") document.getElementById("btnAqi")?.classList.add("active");
+  if (newMode === "traffic") document.getElementById("btnTraffic")?.classList.add("active");
+  if (newMode === "compare") document.getElementById("btnCompare")?.classList.add("active");
   const showAqi      = (mode === "aqi");
   const showTraffic  = (mode === "traffic");
   const showCompare  = (mode === "compare");
@@ -823,6 +920,7 @@ function readAssumptionsFromUI(): void {
   const aqiLabel  = document.getElementById("aqi-time-label");
   if (aqiSlider) {
     aqiSlider.addEventListener("input", () => {
+      clearAnimation();
       const idx = parseInt(aqiSlider.value)||0;
       const ts = aqiTimeline[idx];
       if (aqiLabel) aqiLabel.textContent = ts ? fmt(ts) : "—";
@@ -831,10 +929,14 @@ function readAssumptionsFromUI(): void {
     });
   }
 
+  const btnAqiPlay = document.getElementById("aqi-play-pause");
+  if (btnAqiPlay) btnAqiPlay.addEventListener("click", () => toggleAnimation("aqi-slider", "aqi-play-pause"));
+
   const tSlider = document.getElementById("traffic-slider") as HTMLInputElement;
   const tLabel  = document.getElementById("traffic-time-label");
   if (tSlider) {
     tSlider.addEventListener("input", () => {
+      clearAnimation();
       const idx = parseInt(tSlider.value)||0;
       const ts = trafficTimeline[idx];
       if (tLabel) tLabel.textContent = ts ? fmt(ts) : "—";
@@ -843,8 +945,12 @@ function readAssumptionsFromUI(): void {
     });
   }
 
+  const btnTrafficPlay = document.getElementById("traffic-play-pause");
+  if (btnTrafficPlay) btnTrafficPlay.addEventListener("click", () => toggleAnimation("traffic-slider", "traffic-play-pause"));
+
   if (cmpSlider) {
     cmpSlider.addEventListener("input", () => {
+      clearAnimation();
       const idx = parseInt(cmpSlider.value)||0;
       const ts = compareTimeline[idx];
       if (cLab) cLab.textContent = ts ? fmt(ts) : "—";
@@ -852,6 +958,9 @@ function readAssumptionsFromUI(): void {
       if (ts) { updateAQAtTimestamp(ts); updateTrafficAtTimestamp(ts); }
     });
   }
+
+  const btnComparePlay = document.getElementById("compare-play-pause");
+  if (btnComparePlay) btnComparePlay.addEventListener("click", () => toggleAnimation("compare-slider", "compare-play-pause"));
 
   // Mode buttons (with logs)
   const btnAqi = document.getElementById("btnAqi");

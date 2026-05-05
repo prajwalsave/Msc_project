@@ -10,14 +10,22 @@
       .cesium-button {
         padding: 6px 12px; margin-right: 6px; background: #1a73e8; color: white; border: none;
         border-radius: 6px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,.15);
+        transition: background 0.2s, box-shadow 0.2s;
       }
+      .cesium-button:hover { background: #1557b0; }
       .cesium-button:active { transform: translateY(1px); }
+      .cesium-button.active {
+        background: #0d47a1 !important;
+        border: 2px solid #fff;
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);
+      }
 
       .toolbar {
         position: absolute; top: 10px; left: 10px; z-index: 1000;
         display:flex; flex-wrap:wrap; gap:8px;
         background: rgba(255,255,255,0.9); padding:8px; border-radius:10px;
         box-shadow: 0 10px 26px rgba(0,0,0,0.2);
+        backdrop-filter: blur(8px);
       }
 
       .slider-tray {
@@ -26,31 +34,40 @@
       }
       .slider-group {
         pointer-events:auto;
-        display: none; padding: 8px 10px; border-radius: 10px;
+        display: none; padding: 8px 12px; border-radius: 12px;
         background: rgba(255,255,255,0.92); box-shadow: 0 6px 16px rgba(0,0,0,0.15);
-        align-items: center; gap: 10px;
+        align-items: center; gap: 12px;
+        backdrop-filter: blur(8px);
       }
       .slider-group.show { display: flex; }
-      .slider-group input[type="range"] { width: 360px; }
+      .slider-group input[type="range"] { width: 320px; cursor: pointer; }
+      
+      .play-pause-btn {
+        background: #1a73e8; color: white; border: none; border-radius: 50%;
+        width: 32px; height: 32px; font-size: 14px; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+      }
 
       .legend {
         position: absolute; top: 10px; right: 10px; z-index: 1000;
-        background: rgba(0,0,0,0.65); color: #fff; padding: 10px 12px; border-radius: 10px;
-        font: 12px/1.35 system-ui, sans-serif; box-shadow: 0 10px 26px rgba(0,0,0,0.25);
+        background: rgba(0,0,0,0.5); color: #fff; padding: 10px 14px; border-radius: 10px;
+        font: 11px/1.4 system-ui, sans-serif; box-shadow: 0 10px 26px rgba(0,0,0,0.25);
+        backdrop-filter: blur(4px); border: 1px solid rgba(255,255,255,0.1);
       }
       .legend .row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-      .swatch { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+      .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; border: 1px solid rgba(255,255,255,0.3); }
       .swatch.aq-no2 { background:#ffd54f; }
       .swatch.aq-pm25 { background:#ef5350; }
       .swatch.aq-pm10 { background:#42a5f5; }
       .swatch.aq-o3 { background:#66bb6a; }
-      .swatch.traffic { background:#ff9800; opacity:.7; border:1px solid rgba(255,255,255,0.35); }
+      .swatch.traffic { background:#ff9800; opacity:.7; }
 
       .aq-overlay {
         position: absolute; bottom: 86px; background: rgba(0,0,0,0.72); color: white;
-        padding: 10px; font-family: system-ui, sans-serif; border-radius: 10px; z-index: 1000;
-        width: 300px; display: none; box-shadow: 0 6px 16px rgba(0,0,0,0.25);
-        backdrop-filter: blur(2px);
+        padding: 12px; font-family: system-ui, sans-serif; border-radius: 10px; z-index: 1000;
+        width: 320px; display: none; box-shadow: 0 10px 26px rgba(0,0,0,0.3);
+        backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.1);
       }
 
       /* === Assumptions panel === */
@@ -97,18 +114,21 @@
     <!-- Sliders -->
     <div class="slider-tray">
       <div class="slider-group" id="groupAqi">
+        <button class="play-pause-btn" id="aqi-play-pause" title="Play/Pause">▶</button>
         <strong>AQ time:</strong>
         <input type="range" id="aqi-slider" min="0" value="0" />
         <span id="aqi-time-label">—</span>
       </div>
 
       <div class="slider-group" id="groupTraffic">
+        <button class="play-pause-btn" id="traffic-play-pause" title="Play/Pause">▶</button>
         <strong>Traffic time:</strong>
         <input type="range" id="traffic-slider" min="0" value="0" />
         <span id="traffic-time-label">—</span>
       </div>
 
       <div class="slider-group" id="groupCompare">
+        <button class="play-pause-btn" id="compare-play-pause" title="Play/Pause">▶</button>
         <strong>Compare time:</strong>
         <input type="range" id="compare-slider" min="0" value="0" />
         <span id="compare-time-label">—</span>

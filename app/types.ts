@@ -4,6 +4,7 @@ export interface AQMetricConfig {
   label: string;
   color: Color;
   scale: number;
+  hex: string;
 }
 
 export interface AQDataEntry {
