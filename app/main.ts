@@ -91,6 +91,13 @@ function setGroupVisible(id: string, visible: boolean): void {
   el.classList.toggle("show", visible);
 }
 
+function bucketToHour(isoString: string): string {
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return isoString;
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:00:00`;
+}
+
 /* ===== Emissions helpers ===== */
 function effectiveEF(): number {
   const s = assumptions.shares;
@@ -158,14 +165,32 @@ function pointInPolygon(lon: number, lat: number, ring: [number, number][]): boo
 async function loadAllAQData(): Promise<void> {
   const keyset = new Set<string>();
   for (const name of ZONE_NAMES) {
+    if (!zones[name]) zones[name] = {} as ZoneState;
+    if (!zones[name].aqMap) zones[name].aqMap = {};
+
     try {
-      const res = await fetch(`/data/${name.toLowerCase()}_air_quality_animated.json`);
-      const json = await res.json();
-      if (!zones[name]) zones[name] = {} as ZoneState;
-      zones[name].aqMap = json;
-      Object.keys(json).forEach(k => keyset.add(k));
-      console.log(`✅ AQ ${name}: ${Object.keys(json).length} points`);
-    } catch (err) { console.error(`❌ AQ load failed for ${name}:`, err); }
+      const liveRes = await fetch("/api/aq/latest");
+      if (!liveRes.ok) throw new Error(`Live AQ non-200: ${liveRes.status}`);
+      const liveData = await liveRes.json();
+      
+      for (const [ts, values] of Object.entries(liveData)) {
+        const hourTs = bucketToHour(ts);
+        zones[name].aqMap![hourTs] = values as any;
+      }
+      console.log(`✅ Live AQ merged for ${name}`);
+    } catch (err) {
+      console.warn(`⚠️ Live API failed for ${name}, falling back to static JSON:`, err);
+      try {
+        const res = await fetch(`/data/${name.toLowerCase()}_air_quality_animated.json`);
+        const json = await res.json();
+        zones[name].aqMap = { ...zones[name].aqMap, ...json };
+        console.log(`✅ AQ ${name} static loaded`);
+      } catch (staticErr) {
+        console.error(`❌ AQ static load failed for ${name}:`, staticErr);
+      }
+    }
+    
+    Object.keys(zones[name].aqMap!).forEach(k => keyset.add(k));
   }
   aqiTimeline = Array.from(keyset).sort();
   const slider = document.getElementById("aqi-slider") as HTMLInputElement;
@@ -866,4 +891,15 @@ function readAssumptionsFromUI(): void {
 
   // Default mode (no zone opened until pin click)
   setMode("compare");
+
+  const aqPollInterval = setInterval(async () => {
+    await loadAllAQData();
+    const tset = new Set(trafficTimeline);
+    compareTimeline = aqiTimeline.filter(ts => tset.has(ts));
+    const cmpSlider = document.getElementById("compare-slider");
+    if (cmpSlider) (cmpSlider as HTMLInputElement).max =
+      String(Math.max(0, compareTimeline.length - 1));
+    triggerRefreshForCurrentMode();
+  }, 15 * 60 * 1000);
+  void aqPollInterval;
 })();

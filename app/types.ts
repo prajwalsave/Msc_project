@@ -73,3 +73,31 @@ export interface ZoneState {
 }
 
 export type ZonesMap = Record<string, ZoneState>;
+
+export interface OpenAQParameter {
+  id: number;
+  name: string;
+  units: string;
+  displayName: string;
+}
+
+export interface OpenAQResult {
+  period: {
+    datetimeTo: { utc: string; local: string };
+    datetimeFrom: { utc: string; local: string };
+  };
+  value: number;
+  parameter: OpenAQParameter;
+  coordinates: { latitude: number; longitude: number };
+}
+
+export interface OpenAQResponse {
+  meta: {
+    name: string;
+    website: string;
+    page: number;
+    limit: number;
+    found: number;
+  };
+  results: OpenAQResult[];
+}
