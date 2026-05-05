@@ -40,7 +40,7 @@ export default defineConfig({
       output: { manualChunks: undefined },
       input: {
         main: path.resolve(__dirname, "index.html"),
-        draw: path.resolve(__dirname, "src/dev/draw.html"), // keep as in your current setup
+        draw: path.resolve(__dirname, "public/dev/draw.html"), // keep as in your current setup
       },
     },
   },
