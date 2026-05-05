@@ -18,7 +18,7 @@ const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms
 
 
 // Function to smoothly fly to GLASGOW
-const flyToGlasgow = (viewer: any) => {
+const flyToGlasgow = (viewer: Cesium.Viewer) => {
   return new Promise<void>((resolve) => {
     viewer.camera.flyTo({
       destination: Cesium.Cartesian3.fromDegrees(GLASGOW_LON, GLASGOW_LAT, INITIAL_GLASGOW_HEIGHT),
@@ -36,7 +36,7 @@ const flyToGlasgow = (viewer: any) => {
   })
 }
 
-const flyToTilt = (viewer: any) => {
+const flyToTilt = (viewer: Cesium.Viewer) => {
   return new Promise<void>((resolve) => {
     viewer.camera.flyTo({
       destination: Cesium.Cartesian3.fromDegrees(GLASGOW_LON, GLASGOW_LAT, INITIAL_GLASGOW_HEIGHT),
@@ -55,7 +55,7 @@ const flyToTilt = (viewer: any) => {
 }
 
 // Function to wait for terrain loading
-const waitForTerrain = (viewer: any) => {
+const waitForTerrain = (viewer: Cesium.Viewer) => {
   return new Promise<void>((resolve) => {
     const terrainCheck = () => {
       if (viewer.scene.globe.tilesLoaded) {
@@ -112,7 +112,11 @@ export const init3dGoogleViewer = async () => {
   viewer.scene.screenSpaceCameraController.enableCollisionDetection = true
   viewer.scene.screenSpaceCameraController.minimumZoomDistance = 1
   viewer.scene.screenSpaceCameraController.maximumZoomDistance = 40000000
+  // Cesium typedef gap: property exists at runtime but is absent
+  // from ScreenSpaceCameraController type definitions.
   ;(viewer.scene.screenSpaceCameraController as any).enableInputs = true
+  // Cesium typedef gap: property exists at runtime but is absent
+  // from ScreenSpaceCameraController type definitions.
   ;(viewer.scene.screenSpaceCameraController as any).zoomToCursorEnabled = true
 
   // Wait for terrain to load before flying to Glasgow 
@@ -133,7 +137,6 @@ export const init3dGoogleViewer = async () => {
         Cesium.Cartesian3.subtract(pickedPosition, currentCameraPosition, new Cesium.Cartesian3()),
         new Cesium.Cartesian3()
       )
-      const targetDistance = distance * 0.1 // Move 90% closer
       const targetPosition = Cesium.Cartesian3.add(
         currentCameraPosition,
         Cesium.Cartesian3.multiplyByScalar(direction, distance * 0.9, new Cesium.Cartesian3()),

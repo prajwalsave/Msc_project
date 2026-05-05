@@ -1,101 +1,105 @@
-// ===================== main.js =====================
-window.CESIUM_BASE_URL = '/cesium';
+// ===================== main.ts =====================
+(window as any).CESIUM_BASE_URL = '/cesium';
 
 import {
-  Viewer, Color, Cartesian3, VerticalOrigin, HeightReference,
-  ScreenSpaceEventHandler, ScreenSpaceEventType
+  Viewer, Color, Cartesian3, Cartesian2, VerticalOrigin, HeightReference,
+  ScreenSpaceEventHandler, ScreenSpaceEventType, Entity
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
-import { init3dGoogleViewer } from "./app/cesium-init";
+import { init3dGoogleViewer } from "./cesium-init";
+import {
+  AQMetricConfig, AQData, TrafficData, ZoneFeature, CorrelationResult,
+  Assumptions, ZoneState, ZonesMap, AppMode, AQDataEntry
+} from "./types";
 
 /* ===================== CONFIG ===================== */
 
-const ZONE_NAMES = ["G1"]; // focus on G1 only
+const ZONE_NAMES: string[] = ["G1"]; // focus on G1 only
 
-const AQ_METRICS = {
+const AQ_METRICS: Record<string, AQMetricConfig> = {
   no2:  { label: "NO₂",   color: Color.fromCssColorString("#ffd54f").withAlpha(0.55), scale: 10 },
   pm25: { label: "PM2.5", color: Color.fromCssColorString("#ef5350").withAlpha(0.55), scale: 12 },
   pm10: { label: "PM10",  color: Color.fromCssColorString("#42a5f5").withAlpha(0.55), scale: 8  },
   o3:   { label: "O₃",    color: Color.fromCssColorString("#66bb6a").withAlpha(0.55), scale: 9  }
 };
-const BASE_HEIGHT = 1000;
+const BASE_HEIGHT: number = 1000;
 
 // Traffic visuals
-const TRAFFIC_BASE_HEIGHT = 950;
-const TRAFFIC_MAX_DELTA   = 700;
-const TRAFFIC_ALPHA       = 0.45;
-const TRAFFIC_COLOR       = Color.fromCssColorString("#ff9800").withAlpha(TRAFFIC_ALPHA);
+const TRAFFIC_BASE_HEIGHT: number = 950;
+const TRAFFIC_MAX_DELTA: number   = 700;
+const TRAFFIC_ALPHA: number       = 0.45;
+const TRAFFIC_COLOR: Color       = Color.fromCssColorString("#ff9800").withAlpha(TRAFFIC_ALPHA);
 
 // Footprint gaps (meters)
-const AQ_GAP_M      = 120;
-const TRAFFIC_GAP_M = 440;
+const AQ_GAP_M: number      = 120;
+const TRAFFIC_GAP_M: number = 440;
 
 /* ===== Overlay layout (masonry) ===== */
-const OVERLAY_WIDTH       = 320;
-const OVERLAY_GAP         = 12;
-const OVERLAY_BASE_BOTTOM = 86;
+const OVERLAY_WIDTH: number       = 320;
+const OVERLAY_GAP: number         = 12;
+const OVERLAY_BASE_BOTTOM: number = 86;
 
 /* ===== Assumptions ===== */
-const DEFAULT_ASSUMPTIONS = {
+const DEFAULT_ASSUMPTIONS: Assumptions = {
   shares: { car: 0.78, lgv: 0.14, hgv: 0.05, bus: 0.03 },
   ef:     { car: 0.18, lgv: 0.25, hgv: 0.85, bus: 0.82 }, // kg CO2/km
   dz:     { G1: 0.5, G2: 0.5, G3: 0.5 }                   // km/veh
 };
-let assumptions = loadAssumptions();
+let assumptions: Assumptions = loadAssumptions();
 
 /* ===== Correlation config ===== */
-const MAX_LAG_H = 24;   // ±24 hours
-const MIN_CORR_N = 12;  // minimum overlapping points to accept r
+const MAX_LAG_H: number = 24;   // ±24 hours
+const MIN_CORR_N: number = 12;  // minimum overlapping points to accept r
 
 /* ===================== STATE ===================== */
 
-const zones = {};             // per-zone objects (augmented below with coordsRing + sensors)
-let aqiTimeline = [];         // AQ timestamps (union)
-let trafficTimeline = [];     // traffic timestamps
-let compareTimeline = [];     // intersection timestamps
-let trafficData = {};         // { ts: { G1: count } }
-let trafficMax = 1;
-let mode = "compare";         // "aqi" | "traffic" | "compare"
+const zones: ZonesMap = {};             // per-zone objects (augmented below with coordsRing + sensors)
+let aqiTimeline: string[] = [];         // AQ timestamps (union)
+let trafficTimeline: string[] = [];     // traffic timestamps
+let compareTimeline: string[] = [];     // intersection timestamps
+let trafficData: TrafficData = {};         // { ts: { G1: count } }
+let trafficMax: number = 1;
+let mode: AppMode = "compare";         // "aqi" | "traffic" | "compare"
 
 // corrCache[zoneId][metric] = {bestR, bestLag, n, all:{lag->r}}
-const corrCache = {};
+const corrCache: Record<string, Record<string, CorrelationResult>> = {};
 
 // master toggle for all sensor markers
-let sensorsEnabled = true;
+let sensorsEnabled: boolean = true;
 
 /* ===================== UTILS ===================== */
 
-function metersToDegrees(latDeg, metersEast, metersNorth) {
+function metersToDegrees(latDeg: number, metersEast: number, metersNorth: number): { dLon: number, dLat: number } {
   const latRad = (latDeg * Math.PI) / 180;
   const metersPerDegLat = 111320;
   const metersPerDegLon = 111320 * Math.cos(latRad);
   return { dLon: metersEast / metersPerDegLon, dLat: metersNorth / metersPerDegLat };
 }
-function offsetPolygonMeters(coords, metersEast, metersNorth) {
+function offsetPolygonMeters(coords: [number, number][], metersEast: number, metersNorth: number): [number, number][] {
   const latAvg = coords.reduce((s, [,lat]) => s + lat, 0) / coords.length;
   const { dLon, dLat } = metersToDegrees(latAvg, metersEast, metersNorth);
-  const out = coords.map(([lon, lat]) => [lon + dLon, lat + dLat]);
+  const out: [number, number][] = coords.map(([lon, lat]) => [lon + dLon, lat + dLat]);
   const a = coords[0], b = coords[coords.length - 1];
   if (a[0] === b[0] && a[1] === b[1]) out.push(out[0]);
   return out;
 }
-const fmt  = (ts) => ts;
-const fmt1 = (x)  => (x==null || isNaN(x) ? "—" : Number(x).toFixed(2));
-function setGroupVisible(id, visible) {
+const fmt  = (ts: string): string => ts;
+const fmt1 = (x: any): string => (x==null || isNaN(x) ? "—" : Number(x).toFixed(2));
+function setGroupVisible(id: string, visible: boolean): void {
   const el = document.getElementById(id);
   if (!el) { console.warn(`⚠️ Missing element #${id}`); return; }
   el.classList.toggle("show", visible);
 }
 
 /* ===== Emissions helpers ===== */
-function effectiveEF() {
+function effectiveEF(): number {
   const s = assumptions.shares;
   const sum = Math.max(1e-6, (s.car||0)+(s.lgv||0)+(s.hgv||0)+(s.bus||0));
   const sn = { car:(s.car||0)/sum, lgv:(s.lgv||0)/sum, hgv:(s.hgv||0)/sum, bus:(s.bus||0)/sum };
   const ef = assumptions.ef;
   return sn.car*(ef.car||0) + sn.lgv*(ef.lgv||0) + sn.hgv*(ef.hgv||0) + sn.bus*(ef.bus||0);
 }
-function estimateCO2kg(zoneId, vehicleCount) {
+function estimateCO2kg(zoneId: string, vehicleCount: number | null): number | null {
   if (vehicleCount==null || isNaN(vehicleCount)) return null;
   const km = assumptions.dz[zoneId] ?? 0.5;
   return vehicleCount * effectiveEF() * km;
@@ -104,13 +108,13 @@ function estimateCO2kg(zoneId, vehicleCount) {
 /* ======== Sensors: CSV parsing + point-in-polygon ======== */
 
 // tiny CSV parser (handles quoted fields)
-function parseCSV(text) {
+function parseCSV(text: string): Record<string, string>[] {
   const lines = text.trim().split(/\r?\n/);
   if (!lines.length) return [];
   const headers = lines[0].split(",").map(h => h.trim());
-  const out = [];
+  const out: Record<string, string>[] = [];
   for (let i = 1; i < lines.length; i++) {
-    const row = [];
+    const row: string[] = [];
     let s = "", q = false, L = lines[i];
     for (let j = 0; j < L.length; j++) {
       const c = L[j];
@@ -120,7 +124,7 @@ function parseCSV(text) {
       else s += c;
     }
     row.push(s);
-    const obj = {};
+    const obj: Record<string, string> = {};
     headers.forEach((h,k)=> obj[h] = (row[k] ?? "").trim());
     out.push(obj);
   }
@@ -128,7 +132,7 @@ function parseCSV(text) {
 }
 
 // pick column by common aliases
-function pickHeader(headers, candidates) {
+function pickHeader(headers: string[], candidates: string[]): string | null {
   const lower = headers.map(h => h.toLowerCase());
   for (const c of candidates) {
     const i = lower.indexOf(c.toLowerCase());
@@ -138,7 +142,7 @@ function pickHeader(headers, candidates) {
 }
 
 // point-in-polygon (lon/lat)
-function pointInPolygon(lon, lat, ring /* [[lon,lat], ...] */) {
+function pointInPolygon(lon: number, lat: number, ring: [number, number][]): boolean {
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
     const [xi, yi] = ring[i], [xj, yj] = ring[j];
@@ -151,27 +155,27 @@ function pointInPolygon(lon, lat, ring /* [[lon,lat], ...] */) {
 
 /* ===================== LOADERS ===================== */
 
-async function loadAllAQData() {
-  const keyset = new Set();
+async function loadAllAQData(): Promise<void> {
+  const keyset = new Set<string>();
   for (const name of ZONE_NAMES) {
     try {
       const res = await fetch(`/data/${name.toLowerCase()}_air_quality_animated.json`);
       const json = await res.json();
-      if (!zones[name]) zones[name] = {};
+      if (!zones[name]) zones[name] = {} as ZoneState;
       zones[name].aqMap = json;
       Object.keys(json).forEach(k => keyset.add(k));
       console.log(`✅ AQ ${name}: ${Object.keys(json).length} points`);
     } catch (err) { console.error(`❌ AQ load failed for ${name}:`, err); }
   }
   aqiTimeline = Array.from(keyset).sort();
-  const slider = document.getElementById("aqi-slider");
-  if (slider) slider.max = Math.max(0, aqiTimeline.length - 1);
+  const slider = document.getElementById("aqi-slider") as HTMLInputElement;
+  if (slider) slider.max = Math.max(0, aqiTimeline.length - 1).toString();
   else console.warn("⚠️ Missing #aqi-slider");
   const lab = document.getElementById("aqi-time-label");
   if (lab) lab.textContent = aqiTimeline[0] ? fmt(aqiTimeline[0]) : "—";
 }
 
-async function loadTrafficData() {
+async function loadTrafficData(): Promise<void> {
   try {
     const res = await fetch("/data/zone_traffic_aggregated.json");
     trafficData = await res.json();
@@ -184,8 +188,8 @@ async function loadTrafficData() {
       }
     }
     trafficMax = mx;
-    const tSlider = document.getElementById("traffic-slider");
-    if (tSlider) tSlider.max = Math.max(0, trafficTimeline.length - 1);
+    const tSlider = document.getElementById("traffic-slider") as HTMLInputElement;
+    if (tSlider) tSlider.max = Math.max(0, trafficTimeline.length - 1).toString();
     else console.warn("⚠️ Missing #traffic-slider");
     const lab = document.getElementById("traffic-time-label");
     if (lab) lab.textContent = trafficTimeline[0] ? fmt(trafficTimeline[0]) : "—";
@@ -193,21 +197,21 @@ async function loadTrafficData() {
   } catch (err) { console.error("❌ Traffic load failed:", err); }
 }
 
-async function loadZones(viewer) {
+async function loadZones(viewer: Viewer): Promise<void> {
   const geojson = await fetch("/data/multi-zone.geojson").then(r => r.json());
 
   for (const feature of geojson.features) {
     const zoneId = feature.properties?.zoneId;
     if (!zoneId || !ZONE_NAMES.includes(zoneId)) continue;
 
-    const coords = feature.geometry.coordinates[0];
+    const coords: [number, number][] = feature.geometry.coordinates[0];
     const flat = coords.flat();
     const baseColor = Color.fromCssColorString(feature.properties?.color || "rgb(0,0,255)").withAlpha(0.22);
 
     const polygon = viewer.entities.add({
       id: `zone-${zoneId}`,
       polygon: {
-        hierarchy: Cartesian3.fromDegreesArray(flat),
+        hierarchy: Cartesian3.fromDegreesArray(flat) as any,
         material: baseColor,
         outline: true,
         outlineColor: Color.fromCssColorString("#808080"),
@@ -216,20 +220,20 @@ async function loadZones(viewer) {
     });
 
     // Per-metric offsets (meters)
-    const metricOffsetsM = {
+    const metricOffsetsM: Record<string, { east: number, north: number }> = {
       no2:  { east: -AQ_GAP_M, north: 0 },
       pm25: { east: 0,         north: -AQ_GAP_M },
       pm10: { east: AQ_GAP_M,  north: 0 },
       o3:   { east: 0,         north: AQ_GAP_M }
     };
-    const metricPolygons = {};
+    const metricPolygons: Record<string, Entity> = {};
     for (const [key, cfg] of Object.entries(AQ_METRICS)) {
       const { east, north } = metricOffsetsM[key] || { east: 0, north: 0 };
       const shifted = offsetPolygonMeters(coords, east, north).flat();
       metricPolygons[key] = viewer.entities.add({
         id: `zone-${zoneId}-${key}`,
         polygon: {
-          hierarchy: Cartesian3.fromDegreesArray(shifted),
+          hierarchy: Cartesian3.fromDegreesArray(shifted) as any,
           material: cfg.color,
           outline: false,
           height: BASE_HEIGHT,
@@ -244,7 +248,7 @@ async function loadZones(viewer) {
     const trafficPolygon = viewer.entities.add({
       id: `traffic-${zoneId}`,
       polygon: {
-        hierarchy: Cartesian3.fromDegreesArray(tShifted),
+        hierarchy: Cartesian3.fromDegreesArray(tShifted) as any,
         material: TRAFFIC_COLOR,
         outline: true,
         outlineColor: Color.fromCssColorString("#ffffff").withAlpha(0.6),
@@ -256,8 +260,10 @@ async function loadZones(viewer) {
 
     // Pin
     let lon = -4.25, lat = 55.86;
-    if (Array.isArray(feature.properties?.pin)) [lon, lat] = feature.properties.pin;
-    else {
+    if (Array.isArray(feature.properties?.pin)) {
+      lon = feature.properties.pin[0];
+      lat = feature.properties.pin[1];
+    } else {
       const [lonSum, latSum] = coords.reduce(([a,b],[lo,la]) => [a+lo, b+la], [0,0]);
       lon = lonSum / coords.length; lat = latSum / coords.length;
     }
@@ -295,7 +301,7 @@ async function loadZones(viewer) {
 
 /* ===================== Sensors loader ===================== */
 
-async function loadSensors(viewer) {
+async function loadSensors(viewer: Viewer): Promise<void> {
   try {
     const resp = await fetch("/data/locations.csv");
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -317,7 +323,7 @@ async function loadSensors(viewer) {
       const lat = parseFloat(r[LAT]), lon = parseFloat(r[LON]);
       if (!isFinite(lat) || !isFinite(lon)) { skipped++; continue; }
 
-      let zoneId = r[ZON] || "";
+      let zoneId = r[ZON as string] || "";
       if (!zoneId || !ZONE_NAMES.includes(zoneId)) {
         for (const zId of ZONE_NAMES) {
           const ring = zones[zId]?.coordsRing;
@@ -337,14 +343,14 @@ async function loadSensors(viewer) {
           disableDepthTestDistance: Number.POSITIVE_INFINITY
         },
         label: {
-          text: (r[NAM] || "Sensor"),
+          text: (NAM ? (r[NAM] || "Sensor") : "Sensor"),
           font: "13px sans-serif",
           fillColor: Color.WHITE,
           outlineColor: Color.BLACK,
           outlineWidth: 2,
           showBackground: true,
           backgroundColor: Color.fromCssColorString("#000").withAlpha(0.45),
-          pixelOffset: new Cartesian3(0, -20, 0),
+          pixelOffset: new Cartesian2(0, -20),
           verticalOrigin: VerticalOrigin.TOP,
           heightReference: HeightReference.CLAMP_TO_GROUND,
           show: false
@@ -360,11 +366,11 @@ async function loadSensors(viewer) {
 
     // Hover labels (only when sensors are enabled)
     const handler = new ScreenSpaceEventHandler(viewer.scene.canvas);
-    handler.setInputAction((movement) => {
+    handler.setInputAction((movement: any) => {
       const picked = sensorsEnabled ? viewer.scene.pick(movement.endPosition) : null;
       for (const z of Object.values(zones)) {
         for (const s of z.sensors) {
-          if (s.label) s.label.show = !!(picked && picked.id === s);
+          if (s.label) s.label.show = (!!(picked && picked.id === s)) as any;
         }
       }
     }, ScreenSpaceEventType.MOUSE_MOVE);
@@ -374,14 +380,14 @@ async function loadSensors(viewer) {
   }
 }
 
-function setZoneSensorsVisible(zoneId, visible) {
+function setZoneSensorsVisible(zoneId: string, visible: boolean): void {
   const list = zones[zoneId]?.sensors || [];
   for (const e of list) e.show = visible && sensorsEnabled;
 }
 
 /* ===================== OVERLAY LAYOUT (masonry) ===================== */
 
-function layoutOverlays() {
+function layoutOverlays(): void {
   const panelOpen = document.getElementById("assumptions-panel")?.classList.contains("show");
   const baseLeft  = panelOpen ? 370 : 20;
   const availW    = Math.max(220, window.innerWidth - baseLeft - 20);
@@ -415,7 +421,7 @@ function layoutOverlays() {
 /* ===================== CORRELATION (±24 h) ===================== */
 
 // Pearson r
-function pearsonR(x, y) {
+function pearsonR(x: number[], y: number[]): { r: number, n: number } {
   const n = x.length;
   if (n < 2) return { r: NaN, n };
   let sx=0, sy=0, sxx=0, syy=0, sxy=0;
@@ -433,8 +439,8 @@ function pearsonR(x, y) {
 }
 
 // Build aligned arrays for a given zone & metric over compareTimeline
-function buildAligned(zoneId, metric, lagH) {
-  const A = []; const T = [];
+function buildAligned(zoneId: string, metric: string, lagH: number): { A: number[], T: number[] } {
+  const A: number[] = []; const T: number[] = [];
   const m = compareTimeline.length;
   if (m === 0) return { A, T };
 
@@ -445,15 +451,15 @@ function buildAligned(zoneId, metric, lagH) {
     const idxTR = i + Math.max(0, -lagH);
     const tsAQ = compareTimeline[idxAQ];
     const tsTR = compareTimeline[idxTR];
-    const aqVal = zones[zoneId]?.aqMap?.[tsAQ]?.[metric];
+    const aqVal = (zones[zoneId]?.aqMap?.[tsAQ] as any)?.[metric];
     const trVal = trafficData?.[tsTR]?.[zoneId];
     if (isFinite(aqVal) && isFinite(trVal)) { A.push(aqVal); T.push(trVal); }
   }
   return { A, T };
 }
 
-function computeCorrelationZoneMetric(zoneId, metric, maxLag=MAX_LAG_H) {
-  const result = { bestR: NaN, bestLag: 0, n: 0, all: {} };
+function computeCorrelationZoneMetric(zoneId: string, metric: string, maxLag: number = MAX_LAG_H): CorrelationResult {
+  const result: CorrelationResult = { bestR: NaN, bestLag: 0, n: 0, all: {} };
   let bestAbs = -1;
   for (let lag = -maxLag; lag <= maxLag; lag++) {
     const { A, T } = buildAligned(zoneId, metric, lag);
@@ -471,7 +477,7 @@ function computeCorrelationZoneMetric(zoneId, metric, maxLag=MAX_LAG_H) {
   return result;
 }
 
-function computeAllCorrelations() {
+function computeAllCorrelations(): void {
   for (const z of ZONE_NAMES) {
     corrCache[z] = {};
     for (const metric of Object.keys(AQ_METRICS)) {
@@ -491,7 +497,7 @@ function computeAllCorrelations() {
 
 /* ===================== OVERLAY CONTENT ===================== */
 
-function renderOverlay(zoneId) {
+function renderOverlay(zoneId: string): void {
   const zone = zones[zoneId];
   if (!zone) return;
   const aq = zone.latestAQ;
@@ -503,7 +509,7 @@ function renderOverlay(zoneId) {
     if (aq) {
       html += `<br><b>Air Quality (${aq.ts})</b>`;
       for (const [k,cfg] of Object.entries(AQ_METRICS)) {
-        const val = aq.values?.[k];
+        const val = (aq.values as any)?.[k];
         if (val != null) html += `<br>${cfg.label}: ${val} µg/m³`;
       }
     } else html += `<br><b>Air Quality:</b> —`;
@@ -537,21 +543,21 @@ function renderOverlay(zoneId) {
 
 /* ===================== UPDATERS ===================== */
 
-function updateAQAtTimestamp(ts) {
+function updateAQAtTimestamp(ts: string): void {
   for (const zoneId of ZONE_NAMES) {
     const zone = zones[zoneId];
     if (!zone?.isVisible) continue;
     const entry = zone.aqMap?.[ts];
     for (const [key,cfg] of Object.entries(AQ_METRICS)) {
       const poly = zone.metricPolygons[key];
-      if (!poly) continue;
-      const val = entry?.[key];
+      if (!poly || !poly.polygon) continue;
+      const val = (entry as any)?.[key];
       if (val != null && !isNaN(val)) {
         const h = BASE_HEIGHT + val * cfg.scale;
-        poly.polygon.extrudedHeight = h;
-        poly.polygon.show = (mode !== "traffic");
+        (poly.polygon.extrudedHeight as any) = h;
+        (poly.polygon.show as any) = (mode !== "traffic");
       } else {
-        poly.polygon.show = false;
+        (poly.polygon.show as any) = false;
       }
     }
     if (entry) zone.latestAQ = { ts, values: entry };
@@ -560,7 +566,7 @@ function updateAQAtTimestamp(ts) {
   layoutOverlays();
 }
 
-function updateTrafficAtTimestamp(ts) {
+function updateTrafficAtTimestamp(ts: string): void {
   const values = trafficData[ts] || {};
   for (const zoneId of ZONE_NAMES) {
     const zone = zones[zoneId];
@@ -569,13 +575,15 @@ function updateTrafficAtTimestamp(ts) {
     if (typeof count === "number") {
       const norm = Math.min(1, count / trafficMax);
       const h = TRAFFIC_BASE_HEIGHT + norm * TRAFFIC_MAX_DELTA;
-      zone.trafficPolygon.polygon.extrudedHeight = h;
-      zone.trafficPolygon.polygon.show = (mode !== "aqi");
+      if(zone.trafficPolygon.polygon) {
+        (zone.trafficPolygon.polygon.extrudedHeight as any) = h;
+        (zone.trafficPolygon.polygon.show as any) = (mode !== "aqi");
+      }
       zone.latestTraffic = { ts, count };
       const kg = estimateCO2kg(zoneId, count);
       zone.latestEmissions = kg==null ? null : { ts, kg };
     } else {
-      zone.trafficPolygon.polygon.show = false;
+      if(zone.trafficPolygon.polygon) (zone.trafficPolygon.polygon.show as any) = false;
       zone.latestTraffic = null;
       zone.latestEmissions = null;
     }
@@ -586,7 +594,7 @@ function updateTrafficAtTimestamp(ts) {
 
 /* ===================== MODES ===================== */
 
-function setMode(newMode) {
+function setMode(newMode: AppMode): void {
   mode = newMode;
   console.log(`🟦 setMode('${newMode}')`);
   const showAqi      = (mode === "aqi");
@@ -602,8 +610,8 @@ function setMode(newMode) {
     if (!z) continue;
     const aqVisible = (mode !== "traffic") && z.isVisible;
     const trVisible = (mode !== "aqi")     && z.isVisible;
-    for (const p of Object.values(z.metricPolygons || {})) p.polygon.show = aqVisible;
-    if (z.trafficPolygon) z.trafficPolygon.polygon.show = trVisible;
+    for (const p of Object.values(z.metricPolygons || {})) if(p.polygon) (p.polygon.show as any) = aqVisible;
+    if (z.trafficPolygon && z.trafficPolygon.polygon) (z.trafficPolygon.polygon.show as any) = trVisible;
     renderOverlay(zId);
   }
   layoutOverlays();
@@ -612,19 +620,22 @@ function setMode(newMode) {
   if (Object.values(zones).some(z=>z.isVisible)) triggerRefreshForCurrentMode();
 }
 
-function triggerRefreshForCurrentMode() {
+function triggerRefreshForCurrentMode(): void {
   if (mode === "aqi" && aqiTimeline.length) {
-    const idx = parseInt(document.getElementById("aqi-slider")?.value || 0) || 0;
+    const el = document.getElementById("aqi-slider") as HTMLInputElement;
+    const idx = parseInt(el?.value || "0") || 0;
     const ts = aqiTimeline[idx];
     console.log("↻ refresh AQ @", ts);
     if (ts) updateAQAtTimestamp(ts);
   } else if (mode === "traffic" && trafficTimeline.length) {
-    const idx = parseInt(document.getElementById("traffic-slider")?.value || 0) || 0;
+    const el = document.getElementById("traffic-slider") as HTMLInputElement;
+    const idx = parseInt(el?.value || "0") || 0;
     const ts = trafficTimeline[idx];
     console.log("↻ refresh Traffic @", ts);
     if (ts) updateTrafficAtTimestamp(ts);
   } else if (mode === "compare" && compareTimeline.length) {
-    const idx = parseInt(document.getElementById("compare-slider")?.value || 0) || 0;
+    const el = document.getElementById("compare-slider") as HTMLInputElement;
+    const idx = parseInt(el?.value || "0") || 0;
     const ts = compareTimeline[idx];
     console.log("↻ refresh Compare @", ts);
     if (ts) { updateAQAtTimestamp(ts); updateTrafficAtTimestamp(ts); }
@@ -635,9 +646,9 @@ function triggerRefreshForCurrentMode() {
 
 /* ===================== PIN TOGGLE ===================== */
 
-function enablePinClick(viewer) {
+function enablePinClick(viewer: Viewer): void {
   const handler = new ScreenSpaceEventHandler(viewer.scene.canvas);
-  handler.setInputAction((click) => {
+  handler.setInputAction((click: any) => {
     const picked = viewer.scene.pick(click.position);
     if (!picked?.id) return;
     const zoneId = picked.id.id?.replace?.("pin-","");
@@ -646,7 +657,7 @@ function enablePinClick(viewer) {
     if (!z) return;
 
     z.isVisible = !z.isVisible;
-    z.polygon.polygon.show = z.isVisible;
+    if(z.polygon.polygon) (z.polygon.polygon.show as any) = z.isVisible;
     z.overlay.style.display = z.isVisible ? "block" : "none";
     setZoneSensorsVisible(zoneId, z.isVisible);
 
@@ -654,8 +665,8 @@ function enablePinClick(viewer) {
 
     if (z.isVisible) triggerRefreshForCurrentMode();
     else {
-      for (const p of Object.values(z.metricPolygons || {})) p.polygon.show = false;
-      if (z.trafficPolygon) z.trafficPolygon.polygon.show = false;
+      for (const p of Object.values(z.metricPolygons || {})) if(p.polygon) (p.polygon.show as any) = false;
+      if (z.trafficPolygon && z.trafficPolygon.polygon) (z.trafficPolygon.polygon.show as any) = false;
     }
     layoutOverlays();
   }, ScreenSpaceEventType.LEFT_CLICK);
@@ -663,7 +674,7 @@ function enablePinClick(viewer) {
 
 /* ===================== ASSUMPTIONS UI ===================== */
 
-function loadAssumptions() {
+function loadAssumptions(): Assumptions {
   try {
     const raw = localStorage.getItem("assumptions_v1");
     if (!raw) return structuredClone(DEFAULT_ASSUMPTIONS);
@@ -675,24 +686,24 @@ function loadAssumptions() {
     };
   } catch { return structuredClone(DEFAULT_ASSUMPTIONS); }
 }
-function saveAssumptions() {
+function saveAssumptions(): void {
   localStorage.setItem("assumptions_v1", JSON.stringify(assumptions));
 }
-function pushAssumptionsToUI() {
-  const id = (x)=>document.getElementById(x);
+function pushAssumptionsToUI(): void {
+  const id = (x: string)=>document.getElementById(x) as HTMLInputElement;
   if (!id("share-car")) { console.warn("⚠️ Assumptions inputs missing."); return; }
 
-  id("share-car").value = assumptions.shares.car;
-  id("share-lgv").value = assumptions.shares.lgv;
-  id("share-hgv").value = assumptions.shares.hgv;
-  id("share-bus").value = assumptions.shares.bus;
+  id("share-car").value = assumptions.shares.car.toString();
+  id("share-lgv").value = assumptions.shares.lgv.toString();
+  id("share-hgv").value = assumptions.shares.hgv.toString();
+  id("share-bus").value = assumptions.shares.bus.toString();
 
-  id("ef-car").value = assumptions.ef.car;
-  id("ef-lgv").value = assumptions.ef.lgv;
-  id("ef-hgv").value = assumptions.ef.hgv;
-  id("ef-bus").value = assumptions.ef.bus;
+  id("ef-car").value = assumptions.ef.car.toString();
+  id("ef-lgv").value = assumptions.ef.lgv.toString();
+  id("ef-hgv").value = assumptions.ef.hgv.toString();
+  id("ef-bus").value = assumptions.ef.bus.toString();
 
-  ["dz-G1","dz-G2","dz-G3"].forEach(d => { const el=id(d); if(el) el.value = assumptions.dz[d.split("-")[1]]; });
+  ["dz-G1","dz-G2","dz-G3"].forEach(d => { const el=id(d); if(el) el.value = assumptions.dz[d.split("-")[1]].toString(); });
 
   const g12 = document.getElementById("dz-G12");
   if (g12) (g12.parentElement ? g12.parentElement : g12).style.display = "none";
@@ -700,9 +711,9 @@ function pushAssumptionsToUI() {
   const lab = document.getElementById("label-eff-ef");
   if (lab) lab.textContent = effectiveEF().toFixed(3);
 }
-function readAssumptionsFromUI() {
-  const num = (id, def=0) => {
-    const el = document.getElementById(id);
+function readAssumptionsFromUI(): void {
+  const num = (id: string, def=0) => {
+    const el = document.getElementById(id) as HTMLInputElement;
     if (!el) return def;
     const v = parseFloat(el.value);
     return isFinite(v) && v>=0 ? v : def;
@@ -740,8 +751,8 @@ function readAssumptionsFromUI() {
   // Build compare timeline (intersection)
   const tset = new Set(trafficTimeline);
   compareTimeline = aqiTimeline.filter(ts => tset.has(ts));
-  const cmpSlider = document.getElementById("compare-slider");
-  if (cmpSlider) cmpSlider.max = Math.max(0, compareTimeline.length - 1);
+  const cmpSlider = document.getElementById("compare-slider") as HTMLInputElement;
+  if (cmpSlider) cmpSlider.max = Math.max(0, compareTimeline.length - 1).toString();
   else console.warn("⚠️ Missing #compare-slider");
   const cLab = document.getElementById("compare-time-label");
   if (cLab) cLab.textContent = compareTimeline[0] ? fmt(compareTimeline[0]) : "—";
@@ -751,7 +762,7 @@ function readAssumptionsFromUI() {
   else console.warn("ℹ️ No compare window (AQ ∩ Traffic) — correlations skipped.");
 
   // Sliders
-  const aqiSlider = document.getElementById("aqi-slider");
+  const aqiSlider = document.getElementById("aqi-slider") as HTMLInputElement;
   const aqiLabel  = document.getElementById("aqi-time-label");
   if (aqiSlider) {
     aqiSlider.addEventListener("input", () => {
@@ -763,7 +774,7 @@ function readAssumptionsFromUI() {
     });
   }
 
-  const tSlider = document.getElementById("traffic-slider");
+  const tSlider = document.getElementById("traffic-slider") as HTMLInputElement;
   const tLabel  = document.getElementById("traffic-time-label");
   if (tSlider) {
     tSlider.addEventListener("input", () => {
